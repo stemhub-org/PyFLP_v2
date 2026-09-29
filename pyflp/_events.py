@@ -48,6 +48,28 @@ NEW_TEXT_IDS: Final = (
     TEXT + 39,  # DisplayGroupID.Name
     TEXT + 47,  # TrackID.Name
 )
+ODD_SIZE_IDS: Final = {
+    DWORD + 44: 3,  # From FL 25.2.3; 01 01 00 so far, then TEXT holds "FL Studio <version>"
+}
+"""Fixed size events whose data size isn't the one of their ID's range."""
+
+
+def fixed_size(id: int) -> int | None:
+    """Data size of the fixed size event ``id``, or ``None`` if it is length-prefixed.
+
+    Events below ``WORD`` hold 1 byte, below ``DWORD`` 2 bytes, below ``TEXT`` 4
+    bytes, except those in :attr:`ODD_SIZE_IDS`. From ``TEXT`` on, a varint
+    holding the size of the data precedes it.
+    """
+    if id in ODD_SIZE_IDS:
+        return ODD_SIZE_IDS[id]
+    if id < WORD:
+        return 1
+    if id < DWORD:
+        return 2
+    if id < TEXT:
+        return 4
+    return None
 
 
 class _EventEnumMeta(enum.EnumMeta):
@@ -124,16 +146,9 @@ class EventBase(Generic[T]):
         if self.ALLOWED_IDS and id not in self.ALLOWED_IDS:
             raise EventIDOutOfRange(id, *self.ALLOWED_IDS)
 
-        if id < TEXT:
-            if id < WORD:
-                expected_size = 1
-            elif id < DWORD:
-                expected_size = 2
-            else:
-                expected_size = 4
-
-            if len(data) != expected_size:
-                raise InvalidEventChunkSize(expected_size, len(data))
+        expected_size = fixed_size(id)
+        if expected_size is not None and len(data) != expected_size:
+            raise InvalidEventChunkSize(expected_size, len(data))
 
         self.id = EventEnum(id)
         self._kwds = kwds
@@ -166,14 +181,10 @@ class EventBase(Generic[T]):
     def size(self) -> int:
         """Serialised event size (in bytes)."""
 
-        if self.id >= TEXT:
+        data_size = fixed_size(self.id)
+        if data_size is None:
             return len(bytes(self))
-        elif self.id >= DWORD:
-            return 5
-        elif self.id >= WORD:
-            return 3
-        else:
-            return 2
+        return 1 + data_size
 
 
 AnyEvent: TypeAlias = EventBase[Any]

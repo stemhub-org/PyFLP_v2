@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Event 172 holds 3 bytes (FL Studio 25.2.3 and later) although its ID lies in the
+  4 byte range; reading 4 bytes shifted every later event and lost the tempo.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 

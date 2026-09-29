@@ -41,6 +41,7 @@ from pyflp._events import (
     DATA,
     DWORD,
     NEW_TEXT_IDS,
+    ODD_SIZE_IDS,
     TEXT,
     WORD,
     AnyEvent,
@@ -53,6 +54,7 @@ from pyflp._events import (
     U32Event,
     UnicodeEvent,
     UnknownDataEvent,
+    fixed_size,
 )
 from pyflp.exceptions import HeaderCorrupted, VersionNotDetected
 from pyflp.plugin import PluginID, get_event_by_internal_name
@@ -122,15 +124,10 @@ def parse(file: pathlib.Path | str) -> Project:
         event_type: type[AnyEvent] | None = None
         id = EventEnum(int.from_bytes(stream.read(1), "little"))
 
-        if id < WORD:
-            value = stream.read(1)
-        elif id < DWORD:
-            value = stream.read(2)
-        elif id < TEXT:
-            value = stream.read(4)
-        else:
+        size = fixed_size(id)
+        if size is None:
             size = c.VarInt.parse_stream(stream)
-            value = stream.read(size)
+        value = stream.read(size)
 
         if id == ProjectID.FLVersion:
             parts = value.decode("ascii").rstrip("\0").split(".")
@@ -145,7 +142,9 @@ def parse(file: pathlib.Path | str) -> Project:
                 break
 
         if event_type is None:
-            if id < WORD:
+            if id in ODD_SIZE_IDS:
+                event_type = UnknownDataEvent
+            elif id < WORD:
                 event_type = U8Event
             elif id < DWORD:
                 event_type = U16Event
