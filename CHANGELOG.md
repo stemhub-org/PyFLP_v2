@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `PLItemBase.item_flags`: the raw flags of a playlist item.
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
 
@@ -22,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Playlist items take 32, 60 or 80 bytes depending on the FL Studio version that
   saved the project (80 from FL Studio 24.2.99). `pyflp.parse` passes the version
   to `PlaylistEvent`, since the event's size can be a multiple of several of them.
+- `PatternPLItem.offsets` are ticks (`int`, `-1` if not set) instead of the
+  float reading of their bytes; `ChannelPLItem.offsets` stay floats.
+- `PLItemBase.muted` returns `None` instead of raising `KeyError`, until the flag
+  which mutes an item is known.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 

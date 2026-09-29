@@ -125,3 +125,52 @@ def test_parse_passes_version_to_playlist(tmp_path: pathlib.Path):
 
     pyflp.save(project, tmp_path / "saved.flp")
     assert (tmp_path / "saved.flp").read_bytes() == path.read_bytes()
+
+
+def clip(size: int, version: FLVersion, **kw) -> PatternPLItem | ChannelPLItem:
+    """The only item of a playlist, as a model."""
+    pl = playlist(version, playlist_item(size, **kw))
+    if "pattern" in kw:
+        return PatternPLItem(pl[0], 0, pl, pattern=None)
+    return ChannelPLItem(pl[0], 0, pl, channel=None)
+
+
+@pytest.mark.parametrize("size, version", [(32, FL_20_8_4), (60, FL_24_1_0), (80, FL_25_2_4)])
+def test_pattern_clip_offsets_are_ticks(size: int, version: FLVersion):
+    assert clip(size, version, pattern=1).offsets == (-1, -1)
+
+    item = clip(size, version, pattern=1, offsets=(96, 1536))
+    assert item.offsets == (96, 1536)
+    assert all(isinstance(offset, int) for offset in item.offsets)
+
+    item.offsets = (0, 192)
+    assert item._parent[0]["start_offset"] == 0
+    assert bytes(item._parent)[-size:][24:32] == struct.pack("<ii", 0, 192)
+
+
+def test_pattern_clip_offsets_stored_as_float():
+    """Older projects (seen from FL Studio 12.9) store "none" as the float -1.0."""
+    minus_one = struct.unpack("<i", struct.pack("<f", -1.0))[0]
+    item = clip(32, FL_20_8_4, pattern=1, offsets=(minus_one, minus_one))
+    assert item.offsets == (-1, -1)
+    assert bytes(item._parent)[-32:][24:32] == struct.pack("<ff", -1.0, -1.0)
+
+
+@pytest.mark.parametrize("size, version", [(32, FL_20_8_4), (60, FL_24_1_0), (80, FL_25_2_4)])
+def test_channel_clip_offsets_are_floats(size: int, version: FLVersion):
+    assert clip(size, version, channel=0).offsets == (-1.0, -1.0)
+
+    item = clip(size, version, channel=0, offsets=(12.5, 480.25))
+    assert item.offsets == (12.5, 480.25)
+
+    item.offsets = (0.0, 1000.5)
+    assert bytes(item._parent)[-size:][24:32] == struct.pack("<ff", 0.0, 1000.5)
+
+
+def test_item_flags_are_raw():
+    assert clip(80, FL_25_2_4, pattern=1).item_flags == 0x40
+    assert clip(80, FL_25_2_4, channel=0, flags=0x2040).item_flags == 0x2040
+
+
+def test_muted_is_unknown():
+    assert clip(80, FL_25_2_4, pattern=1, flags=0x2040).muted is None

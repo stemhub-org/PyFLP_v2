@@ -71,6 +71,10 @@ class PLSelectionEvent(StructEventBase):
 PATTERN_BASE: Final = 20480
 """Value of every playlist item's ``pattern_base``, added to a pattern's index."""
 
+_IS_PATTERN_CLIP = c.this.item_index > c.this.pattern_base
+_FLOAT_MINUS_ONE: Final = -1082130432
+"""The bits of the float ``-1.0`` read as an int32; older projects' "no offset"."""
+
 
 class PlaylistEvent(ListEventBase):
     """The items (clips) of an arrangement's playlist.
@@ -90,10 +94,11 @@ class PlaylistEvent(ListEventBase):
             "track_rvidx" / c.Int16ul * "Stored reversed i.e. Track 1 would be 499",  # 14
             "group" / c.Int16ul,  # 16
             "_u1" / c.Bytes(2) * "Always (120, 0)",  # 18
-            "item_flags" / c.Int16ul * "Always (64, 0)",  # 20
+            "item_flags" / c.Int16ul * "0x40 by default",  # 20
             "_u2" / c.Bytes(4) * "Always (64, 100, 128, 128)",  # 24
-            "start_offset" / c.Float32l,  # 28
-            "end_offset" / c.Float32l,  # 32
+            # Ticks (-1: none) for pattern clips, a float (-1.0: none) for channel clips
+            "start_offset" / c.IfThenElse(_IS_PATTERN_CLIP, c.Int32sl, c.Float32l),  # 28
+            "end_offset" / c.IfThenElse(_IS_PATTERN_CLIP, c.Int32sl, c.Float32l),  # 32
             # A u32 unique to each item of the playlist first, then unknown data.
             "_u3" / c.If(c.this._params["item_size"] >= 60, c.Bytes(28)),  # 60
             # Usually a float32 (0.0), then a float64 (1.0) and 8 zero bytes.
@@ -236,19 +241,38 @@ class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
     group = StructProp[int]()
     """Returns 0 for no group, else a group number for clips in the same group."""
 
+    item_flags = StructProp[int]()
+    """Raw flags of the item; ``0x40`` for most items.
+
+    Which of them mutes an item is not known yet, see :attr:`muted`.
+    """
+
     length = StructProp[int]()
     """PPQ-dependant quantity."""
 
-    muted = StructProp[bool]()
-    """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*."""
+    @property
+    def muted(self) -> bool | None:
+        """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*.
+
+        Always ``None`` for now: the flag of :attr:`item_flags` which mutes an
+        item hasn't been identified yet.
+        """
+        return None
 
     @property
     def offsets(self) -> tuple[float, float]:
         """Returns a ``(start, end)`` offset tuple.
 
         An offset is the distance from the item's actual start or end.
+
+        * :class:`PatternPLItem`: PPQ-dependant ticks (``int``), ``-1`` if not set.
+        * :class:`ChannelPLItem`: ``float``, ``-1.0`` if not set.
         """
-        return (self["start_offset"], self["end_offset"])
+        start, end = self["start_offset"], self["end_offset"]
+        if isinstance(start, int) and isinstance(end, int):  # A pattern clip's ticks
+            start = -1 if start == _FLOAT_MINUS_ONE else start
+            end = -1 if end == _FLOAT_MINUS_ONE else end
+        return (start, end)
 
     @offsets.setter
     def offsets(self, value: tuple[float, float]) -> None:

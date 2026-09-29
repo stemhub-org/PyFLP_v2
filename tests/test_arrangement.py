@@ -95,6 +95,13 @@ def test_track_items(tracks: tuple[Track, ...]):
         elif track.name in ("Cut pattern", "Automation"):
             num_items = 1
 
+        if track.name == "Audio track":
+            assert {i.offsets for i in track} == {(-1.0, -1.0)}
+        elif track.name == "MIDI":
+            assert {i.offsets for i in track} == {(-1, -1)}
+        elif track.name == "Cut pattern":
+            assert [i.offsets for i in track] == [(0, 1536)]
+
         assert len(track) == num_items
         assert [i.group for i in track] == [0] * num_items
 
