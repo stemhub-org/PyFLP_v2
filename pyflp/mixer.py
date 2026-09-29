@@ -319,8 +319,8 @@ class Slot(EventModel):
     ![](https://bit.ly/3RUDtTu)
     """
 
-    def __init__(self, events: EventTree, params: list[dict[str, Any]] | None = None) -> None:
-        super().__init__(events, params=params or [])
+    def __init__(self, events: EventTree, params: dict[int, dict[str, Any]] | None = None) -> None:
+        super().__init__(events, params=params or {})
 
     def __repr__(self) -> str:
         return f"Slot (name={self.name}, iid={self.index}, plugin={self.plugin!r})"
@@ -406,6 +406,10 @@ class Insert(EventModel, ModelCollection[Slot]):
         raise ModelNotFound(i)
 
     @property
+    def _params(self) -> _InsertItems:
+        return self._kw.get("params", _InsertItems())
+
+    @property
     def iid(self) -> int:
         """Position of the insert in the :class:`Mixer` minus one.
 
@@ -424,9 +428,13 @@ class Insert(EventModel, ModelCollection[Slot]):
         return self._kw.get("number", self._kw["iid"] + 1)
 
     def __iter__(self) -> Iterator[Slot]:
-        """Iterator over the effect empty and used slots."""
-        for idx, ed in enumerate(self.events.divide(SlotID.Index, *SlotID, *PluginID)):
-            yield Slot(ed, params=self._kw["params"].slots[idx])
+        """Iterator over the effect empty and used slots.
+
+        A slot's plugin events come before its :attr:`SlotID.Index`.
+        """
+        slots = self._params.slots
+        for idx, ed in enumerate(self.events.split(SlotID.Index, *SlotID, *PluginID)):
+            yield Slot(ed, params=slots.get(idx))
 
     def __len__(self) -> int:
         try:

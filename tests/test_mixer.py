@@ -7,6 +7,7 @@ from typing import Mapping, Sequence, cast
 from pyflp._events import RGBA
 from pyflp.channel import Sampler
 from pyflp.mixer import Insert, InsertDock, Mixer, MixerID, MixerParamsEvent
+from pyflp.plugin import FruityFastDist, VSTPlugin
 from pyflp.project import Project
 
 from .conftest import get_model
@@ -172,3 +173,39 @@ def test_fl2024_inserts_end_with_their_output(tmp_path: pathlib.Path):
     assert [insert.iid for insert in inserts] == [-1, 0, 1, 2]
     assert mixer[2].name == "Bass"
     assert mixer[-1] == inserts[-1]
+
+
+def test_slot_plugins_come_before_their_index(mixer: Mixer):
+    plugin_test = mixer["Plugin Test"]
+    assert len(plugin_test) == 10
+    assert [slot.internal_name for slot in plugin_test] == [
+        "Fruity Balance",
+        "Fruity Fast Dist",
+        "Fruity Send",
+        "Fruity Soft Clipper",
+        "Fruity Stereo Enhancer",
+        "Soundgoodizer",
+        "Fruity Wrapper",
+        None,
+        None,
+        None,
+    ]
+    assert isinstance(plugin_test[1].plugin, FruityFastDist)
+    assert isinstance(plugin_test[6].plugin, VSTPlugin)
+    assert plugin_test[7].plugin is None
+    assert [slot.name for slot in mixer["Effect slots"]][:3] == ["Colored", "Iconified", None]
+
+
+def test_insert_preset_slots():
+    assert [slot.internal_name for slot in get_insert("effects-bypassed.fst")][:2] == [
+        "Fruity NoteBook 2",
+        None,
+    ]
+
+
+def test_fl2024_slot_plugins(tmp_path: pathlib.Path):
+    slots = {1: ("Fruity Balance", "Gain"), 3: ("Fruity Send", "Send")}
+    blocks = (insert_block(), insert_block(slots=slots, routing=[1]), insert_block())
+    insert = parse(tmp_path, flp_bytes(fl2024_mixer(*blocks))).mixer[1]
+    assert [slot.name for slot in insert] == [None, "Gain", None, "Send", *[None] * 6]
+    assert [slot.index for slot in insert] == list(range(10))

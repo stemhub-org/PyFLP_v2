@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each insert ends with its own `InsertID.Output`: `Insert.output` was the one of
   the previous insert. The mixer yields as many inserts as FL Studio 24.2.99+
   stores (`MixerID.InsertCount`).
+- An effect slot holds the plugin events before its `SlotID.Index`: slot *n*
+  showed the plugin of slot *n + 1*.
 
 ## [2.2.1] - 2023-06-05
 
