@@ -184,21 +184,13 @@ class TrackSync(ct.EnumBase):
     Auto = 6
 
 
-class HeightAdapter(ct.Adapter[float, float, str, str]):
-    def _decode(self, obj: float, *_: Any) -> str:
-        return str(int(obj * 100)) + "%"
-
-    def _encode(self, obj: str, *_: Any) -> float:
-        return int(obj[:-1]) / 100
-
-
 class TrackEvent(StructEventBase):
     STRUCT = c.Struct(
         "iid" / c.Optional(c.Int32ul),  # 4
         "color" / c.Optional(c.Int32ul),  # 8
         "icon" / c.Optional(c.Int32ul),  # 12
         "enabled" / c.Optional(c.Flag),  # 13
-        "height" / c.Optional(HeightAdapter(c.Float32l)),  # 17
+        "height" / c.Optional(c.Float32l),  # 17
         "locked_height" / c.Optional(c.Int32sl),  # 21
         "content_locked" / c.Optional(c.Flag),  # 22
         "motion" / c.Optional(StdEnum[TrackMotion](c.Int32ul)),  # 26
@@ -209,7 +201,8 @@ class TrackEvent(StructEventBase):
         "position_sync" / c.Optional(StdEnum[TrackSync](c.Int32ul)),  # 46
         "grouped" / c.Optional(c.Flag),  # 47
         "locked" / c.Optional(c.Flag),  # 48
-        "_u1" / c.Optional(c.GreedyBytes),  # * 66 as of 20.9.1
+        # 13 bytes in FL 12.9 (61 in all), 18 from FL 20.8 to 24.1 (66), 22 from 24.2.99 (70)
+        "_u1" / c.Optional(c.GreedyBytes),
     ).compile()
 
 
@@ -324,6 +317,16 @@ class _TrackColorProp(StructProp[RGBA]):
         super()._set(ev_or_ins, int.from_bytes(bytes(value), "little"))  # type: ignore
 
 
+class _TrackHeightProp(StructProp[str]):
+    def _get(self, ev_or_ins: Any) -> str | None:
+        value = cast(Optional[float], super()._get(ev_or_ins))
+        if value is not None:
+            return f"{round(value * 100)}%"
+
+    def _set(self, ev_or_ins: Any, value: str) -> None:
+        super()._set(ev_or_ins, int(value[:-1]) / 100)  # type: ignore
+
+
 class _TrackKW(TypedDict):
     items: list[PLItemBase]
 
@@ -376,8 +379,8 @@ class Track(EventModel, ModelCollection[PLItemBase]):
     :guilabel:`&Group with above track`
     """
 
-    height = StructProp[str](TrackID.Data)
-    """Track height in FL's interface. Linear. :guilabel:`&Size`."""
+    height = _TrackHeightProp(TrackID.Data)
+    """Track height in FL's interface, as a percentage. Linear. :guilabel:`&Size`."""
 
     icon = StructProp[int](TrackID.Data)
     """Returns ``0`` if not set, else an internal icon ID.

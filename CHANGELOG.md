@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   float reading of their bytes; `ChannelPLItem.offsets` stay floats.
 - `PLItemBase.muted` returns `None` instead of raising `KeyError`, until the flag
   which mutes an item is known.
+- Track data (61, 66 or 70 bytes) saves back unchanged: `Track.height` used to
+  truncate the stored float to a whole percentage (and now rounds it).
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 
