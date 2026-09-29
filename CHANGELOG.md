@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Insert.routes` yields an `InsertRoute(destination, level)` for every insert
   the routing (`InsertID.Routing`) sends to; it yielded values of the insert's
   own params.
+- `MixerParamsEvent.items_` is keyed by the raw insert key (`channel_data >> 6`,
+  see `Mixer`) instead of that key `& 0x7F`, and the `_u1` field of its items is
+  now `kind`.
 
 ### Removed
 
@@ -71,8 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 - Each insert ends with its own `InsertID.Output`: `Insert.output` was the one of
-  the previous insert. The mixer yields as many inserts as FL Studio 24.2.99+
-  stores (`MixerID.InsertCount`).
+  the previous insert.
 - An effect slot holds the plugin events before its `SlotID.Index`: slot *n*
   showed the plugin of slot *n + 1*.
 - Mixer params (`MixerID.Params`) reach the right insert in FL Studio 24.2.99+
