@@ -16,8 +16,9 @@
 from __future__ import annotations
 
 import enum
+import struct
 import warnings
-from typing import Any, Final, Iterator, Literal, Optional, cast
+from typing import Any, Final, Generic, Iterator, Literal, Optional, TypeVar, cast
 
 import construct as c
 import construct_typed as ct
@@ -74,6 +75,30 @@ PATTERN_BASE: Final = 20480
 _IS_PATTERN_CLIP = c.this.item_index > c.this.pattern_base
 _FLOAT_MINUS_ONE: Final = -1082130432
 """The bits of the float ``-1.0`` read as an int32; older projects' "no offset"."""
+_INT32_MIN: Final = -(2**31)
+_INT32_MAX: Final = 2**31 - 1
+
+_OffsetT = TypeVar("_OffsetT", int, float)
+
+
+def _tick_offset(value: object) -> int:
+    """``value`` as a pattern clip's offset, an int32 of ticks."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"pattern clip offsets are int ticks, not {type(value).__name__}")
+    if not _INT32_MIN <= value <= _INT32_MAX:
+        raise ValueError(f"pattern clip offset {value} is outside the int32 range")
+    return value
+
+
+def _float_offset(value: object) -> float:
+    """``value`` as a channel clip's offset, a float32."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"channel clip offsets are float, not {type(value).__name__}")
+    try:
+        struct.pack("<f", value)
+    except OverflowError:
+        raise ValueError(f"channel clip offset {value} is outside the float32 range") from None
+    return float(value)
 
 
 class PlaylistEvent(ListEventBase):
@@ -232,7 +257,7 @@ class TrackID(EventEnum):
     Data = (DATA + 30, TrackEvent)
 
 
-class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
+class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin, Generic[_OffsetT]):
     group = StructProp[int]()
     """Returns 0 for no group, else a group number for clips in the same group."""
 
@@ -255,13 +280,19 @@ class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
         return None
 
     @property
-    def offsets(self) -> tuple[float, float]:
+    def offsets(self) -> tuple[_OffsetT, _OffsetT]:
         """Returns a ``(start, end)`` offset tuple.
 
         An offset is the distance from the item's actual start or end.
 
         * :class:`PatternPLItem`: PPQ-dependant ticks (``int``), ``-1`` if not set.
         * :class:`ChannelPLItem`: ``float``, ``-1.0`` if not set.
+
+        Raises:
+            TypeError: When set to anything but a pair of ``int`` (pattern clip)
+                or of ``float`` or ``int`` (channel clip).
+            ValueError: When set to more or fewer than two offsets, or to one
+                which doesn't fit in an int32 (pattern clip) or a float32.
         """
         start, end = self["start_offset"], self["end_offset"]
         if isinstance(start, int) and isinstance(end, int):  # A pattern clip's ticks
@@ -270,14 +301,23 @@ class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
         return (start, end)
 
     @offsets.setter
-    def offsets(self, value: tuple[float, float]) -> None:
-        self["start_offset"], self["end_offset"] = value
+    def offsets(self, value: tuple[_OffsetT, _OffsetT]) -> None:
+        try:
+            start, end = value
+        except TypeError:
+            raise TypeError(f"offsets are a (start, end) pair, not {value!r}") from None
+        except ValueError:
+            raise ValueError(f"offsets are a (start, end) pair, not {value!r}") from None
+
+        is_pattern_clip = self["item_index"] > self["pattern_base"]  # As in PlaylistEvent
+        check = _tick_offset if is_pattern_clip else _float_offset
+        self["start_offset"], self["end_offset"] = check(start), check(end)
 
     position = StructProp[int]()
     """PPQ-dependant quantity."""
 
 
-class ChannelPLItem(PLItemBase, ModelReprMixin):
+class ChannelPLItem(PLItemBase[float], ModelReprMixin):
     """An audio clip or automation on the playlist of an arrangement.
 
     *New in FL Studio v2.0.1*.
@@ -293,7 +333,7 @@ class ChannelPLItem(PLItemBase, ModelReprMixin):
         self["item_index"] = channel.iid
 
 
-class PatternPLItem(PLItemBase, ModelReprMixin):
+class PatternPLItem(PLItemBase[int], ModelReprMixin):
     """A pattern block or clip on the playlist of an arrangement.
 
     *New in FL Studio v7.0.0*.

@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
 
+### Changed
+
+- Setting `PLItemBase.offsets` checks the pair at once instead of failing when
+  the project is saved: a `PatternPLItem` takes `int` ticks and a `ChannelPLItem`
+  `float` (or `int`), else `TypeError`; values out of the int32 or float32 range
+  raise `ValueError`. `PatternPLItem.offsets` is typed `tuple[int, int]`.
+
 ### Fixed
 
 - Event 172 holds 3 bytes (FL Studio 25.2.3 and later) although its ID lies in the

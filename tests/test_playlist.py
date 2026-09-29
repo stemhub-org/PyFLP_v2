@@ -171,6 +171,56 @@ def test_channel_clip_offsets_are_floats(size: int, version: FLVersion):
     assert bytes(item._parent)[-size:][24:32] == struct.pack("<ff", 0.0, 1000.5)
 
 
+@pytest.mark.parametrize(
+    "offsets, error, message",
+    [
+        ((0.5, 192), TypeError, "pattern clip offsets are int ticks, not float"),
+        ((0, 192.0), TypeError, "pattern clip offsets are int ticks, not float"),
+        ((True, 192), TypeError, "pattern clip offsets are int ticks, not bool"),
+        ((0, 2**31), ValueError, "outside the int32 range"),
+        ((-(2**31) - 1, 0), ValueError, "outside the int32 range"),
+        ((0, 96, 192), ValueError, r"a \(start, end\) pair"),
+        (96, TypeError, r"a \(start, end\) pair"),
+    ],
+)
+def test_pattern_clip_offsets_are_checked(offsets, error: type[Exception], message: str):
+    item = clip(80, FL_25_2_4, pattern=1, offsets=(96, 1536))
+    before = bytes(item._parent)
+
+    with pytest.raises(error, match=message):
+        item.offsets = offsets
+    assert item.offsets == (96, 1536)
+    assert bytes(item._parent) == before
+
+
+@pytest.mark.parametrize(
+    "offsets, error, message",
+    [
+        (("0", 1.0), TypeError, "channel clip offsets are float, not str"),
+        ((None, 1.0), TypeError, "channel clip offsets are float, not NoneType"),
+        ((False, 1.0), TypeError, "channel clip offsets are float, not bool"),
+        ((0.0, 1e39), ValueError, "outside the float32 range"),
+        ((0.0,), ValueError, r"a \(start, end\) pair"),
+    ],
+)
+def test_channel_clip_offsets_are_checked(offsets, error: type[Exception], message: str):
+    item = clip(80, FL_25_2_4, channel=0, offsets=(12.5, 480.25))
+    before = bytes(item._parent)
+
+    with pytest.raises(error, match=message):
+        item.offsets = offsets
+    assert item.offsets == (12.5, 480.25)
+    assert bytes(item._parent) == before
+
+
+def test_channel_clip_offsets_take_ints_as_floats():
+    item = clip(80, FL_25_2_4, channel=0)
+    item.offsets = (0, 1000)
+    assert item.offsets == (0.0, 1000.0)
+    assert all(isinstance(offset, float) for offset in item.offsets)
+    assert bytes(item._parent)[-80:][24:32] == struct.pack("<ff", 0.0, 1000.0)
+
+
 def test_item_flags_are_raw():
     assert clip(80, FL_25_2_4, pattern=1).item_flags == 0x40
     assert clip(80, FL_25_2_4, channel=0, flags=0x2040).item_flags == 0x2040
