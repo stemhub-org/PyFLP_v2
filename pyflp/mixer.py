@@ -589,6 +589,20 @@ class Mixer(EventModel, ModelCollection[Insert]):
     """Represents the mixer which contains :class:`Insert` instances.
 
     ![](https://bit.ly/3eOsblF)
+
+    :attr:`MixerID.Params` holds the parameters of all inserts, grouped by
+    insert under a key, ``channel_data >> 6``; ``channel_data & 0x3F`` is the
+    slot of a slot parameter. Insert and slot parameters are items of kind 31.
+    The keys follow one of two layouts:
+
+    * Up to FL Studio 24.1: insert *n* (master = 0) is key ``128 + n`` and the
+      "current" insert, stored last, key 254. Send levels are kind 31 items
+      whose ``id`` is ``64 + destination``.
+    * When :attr:`MixerID.InsertCount` (event 103) is stored, from FL Studio
+      24.2.99: insert *n* is key ``448 + n`` and the "current" insert key 949.
+      Send levels are kind 32 items whose ``id`` is the destination.
+
+    In both, key 256 holds a single item, of kind 0, which belongs to no insert.
     """
 
     _MAX_INSERTS = {

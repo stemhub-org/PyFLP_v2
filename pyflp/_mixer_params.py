@@ -76,11 +76,12 @@ Before, the "current" insert is keyed like the others, by its position.
 class MixerParamsEvent(ListEventBase):
     """Parameters of all inserts and their slots: 12 bytes each.
 
-    ``channel_data`` holds the insert's key (upper 10 bits, see :class:`Mixer`)
-    and the slot index (lower 6 bits). ``kind`` is 31 for insert and slot
-    parameters and 32 for send levels since FL Studio 24.2.99, whose ``id`` is
-    the destination insert. One item, of kind 0 and key 256, belongs to no
-    insert; its meaning is unknown.
+    ``channel_data`` holds the insert's key (upper 10 bits, see
+    :class:`pyflp.mixer.Mixer` for its two layouts) and the slot index (lower
+    6 bits). ``kind`` is 31 for insert and slot parameters and 32 for send
+    levels since FL Studio 24.2.99, whose ``id`` is the destination insert.
+    One item, of kind 0 and key 256, belongs to no insert; its meaning is
+    unknown.
     """
 
     STRUCT = c.GreedyRange(
