@@ -605,6 +605,25 @@ class EventTree:
         self.pop(id, pos)
 
     @yields_child
+    def split(self, terminator: EventEnum, *ids: EventEnum) -> Iterator[EventTree]:
+        """Yields subtrees of events with ``ids``, each one ending with a ``terminator``.
+
+        Unlike :meth:`divide`, where the separator starts a subtree, the
+        ``terminator`` closes it. Events after the last ``terminator`` make up
+        a last subtree, if there are any.
+        """
+        el: list[IndexedEvent] = []
+        for ie in self.lst:
+            if ie.e.id == terminator:
+                el.append(ie)
+                yield EventTree(self, el)
+                el = []
+            elif ie.e.id in ids:
+                el.append(ie)
+        if el:
+            yield EventTree(self, el)
+
+    @yields_child
     def separate(self, id: EventEnum) -> Iterator[EventTree]:
         """Yields a separate ``EventTree`` for every event with matching ``id``."""
         yield from (EventTree(self, [ie]) for ie in self._get_ie(id))

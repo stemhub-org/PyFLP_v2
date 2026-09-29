@@ -31,7 +31,6 @@ from pyflp._events import (
     DWORD,
     TEXT,
     WORD,
-    AnyEvent,
     ColorEvent,
     EventEnum,
     EventTree,
@@ -163,6 +162,9 @@ class InsertID(EventEnum):
 @enum.unique
 class MixerID(EventEnum):
     APDC = 29
+    InsertCount = (WORD + 39, U16Event)  #: 24.2.99+
+    """Number of inserts stored, counting the master and "current" inserts."""
+
     Params = (DATA + 17, MixerParamsEvent)
 
 
@@ -365,6 +367,7 @@ class Slot(EventModel):
 class _InsertKW(TypedDict):
     iid: int
     max_slots: int
+    number: NotRequired[int]
     params: NotRequired[_InsertItems]
 
 
@@ -383,7 +386,7 @@ class Insert(EventModel, ModelCollection[Slot]):
 
     # TODO Add number of used slots
     def __repr__(self) -> str:
-        return f"Insert(name={self.name!r}, iid={self.iid})"
+        return f"Insert(name={self.name!r}, number={self.number})"
 
     @supports_slice  # type: ignore
     def __getitem__(self, i: int | str) -> Slot:
@@ -404,8 +407,21 @@ class Insert(EventModel, ModelCollection[Slot]):
 
     @property
     def iid(self) -> int:
-        """-1 for "current" insert, 0 for master and upto :attr:`Mixer.max_inserts`."""
+        """Position of the insert in the :class:`Mixer` minus one.
+
+        -1 for master, ``number - 1`` for the other inserts and
+        ``len(mixer) - 2`` for the "current" insert. Kept for backward
+        compatibility; :attr:`number` follows FL Studio's numbering.
+        """
         return self._kw["iid"]
+
+    @property
+    def number(self) -> int:
+        """The number FL Studio shows: 0 for master, then 1, 2 and so on.
+
+        -1 for the "current" insert, which FL Studio stores after all others.
+        """
+        return self._kw.get("number", self._kw["iid"] + 1)
 
     def __iter__(self) -> Iterator[Slot]:
         """Iterator over the effect empty and used slots."""
@@ -581,49 +597,60 @@ class Mixer(EventModel, ModelCollection[Insert]):
     # Inserts don't store their index internally.
     @supports_slice  # type: ignore
     def __getitem__(self, i: int | str | slice) -> Insert:
-        """Returns an insert with the specified index or name.
+        """Returns an insert with the specified number or name.
 
         Args:
-            i: An index between 0 to :attr:`Mixer.max_inserts` resembling the
-                one shown by FL Studio or the name of the insert. Use 0 for
-                master and -1 for "current" insert.
+            i: An :attr:`Insert.number`, i.e. the one shown by FL Studio, or
+                the name of the insert. Use 0 for master and -1 for "current"
+                insert.
 
         Raises:
             ModelNotFound: An :class:`Insert` with the specifcied name or index
                 isn't found.
         """
-        for idx, insert in enumerate(self):
-            if (isinstance(i, int) and idx == i + 1) or i == insert.name:
+        for insert in self:
+            if (isinstance(i, int) and insert.number == i) or i == insert.name:
                 return insert
         raise ModelNotFound(i)
 
     def __iter__(self) -> Iterator[Insert]:
-        def select(e: AnyEvent) -> bool | None:
-            if e.id == InsertID.Output:
-                return False
+        """Yields the inserts in the order FL Studio stores them.
 
-            if e.id in (*InsertID, *PluginID, *SlotID):
-                return True
-
+        Master comes first, then inserts 1, 2 and so on, and the "current"
+        insert last. Every insert ends with its :attr:`Insert.output`.
+        """
         params: dict[int, _InsertItems] = {}
         if MixerID.Params in self.events.ids:
             params = cast(MixerParamsEvent, self.events.first(MixerID.Params)).items_
 
-        for i, ed in enumerate(self.events.subtrees(select, self.max_inserts)):
-            if i in params:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots, params=params[i])
-            else:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots)
+        blocks = list(self.events.split(InsertID.Output, *InsertID, *PluginID, *SlotID))
+        count = self._insert_count(len(blocks))
+        for position, ed in enumerate(blocks):
+            # A project has at least master and the "current" insert,
+            # an insert preset only the insert it was saved from.
+            number = -1 if count > 1 and position == count - 1 else position
+            kw: _InsertKW = {"iid": position - 1, "number": number, "max_slots": self.max_slots}
+            if position in params:
+                kw["params"] = params[position]
+            yield Insert(ed, **kw)
 
     def __len__(self) -> int:
         """Returns the number of inserts present in the project.
+
+        This counts the master and "current" inserts too.
 
         Raises:
             NoModelsFound: No inserts could be found.
         """
         if InsertID.Flags not in self.events.ids:
             raise NoModelsFound
-        return self.events.count(InsertID.Flags)
+        return self._insert_count(self.events.count(InsertID.Flags))
+
+    def _insert_count(self, found: int) -> int:
+        """:attr:`MixerID.InsertCount` if stored (24.2.99+), else ``found``."""
+        if MixerID.InsertCount in self.events.ids:
+            return self.events.first(MixerID.InsertCount).value
+        return found
 
     def __str__(self) -> str:
         return f"Mixer: {len(self)} inserts"
@@ -634,6 +661,9 @@ class Mixer(EventModel, ModelCollection[Insert]):
     @property
     def max_inserts(self) -> int:
         """Estimated max number of inserts including sends, master and current.
+
+        Since FL Studio 24.2.99, how many inserts a project stores varies:
+        ``len(mixer)`` gives it.
 
         Maximum number of slots w.r.t. FL Studio:
 

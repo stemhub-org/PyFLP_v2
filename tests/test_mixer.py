@@ -1,11 +1,57 @@
 from __future__ import annotations
 
-from typing import cast
+import itertools
+import pathlib
+from typing import Mapping, Sequence, cast
 
 from pyflp._events import RGBA
+from pyflp.channel import Sampler
 from pyflp.mixer import Insert, InsertDock, Mixer, MixerID, MixerParamsEvent
+from pyflp.project import Project
 
 from .conftest import get_model
+from .synthetic import RawEvent, flp_bytes, pack_i32, pack_text, pack_u8, pack_u16, parse
+
+_FLAGS = bytes(4) + pack_i32(0x0C) + bytes(4)  # EnableEffects | Enabled
+
+
+def insert_block(
+    *,
+    name: str | None = None,
+    slots: Mapping[int, tuple[str, str]] | None = None,
+    routing: Sequence[int] | None = None,
+    output: int = -1,
+    input: int = -1,
+) -> list[RawEvent]:
+    """The events of one insert as FL Studio 24.2.99+ saves them."""
+    events: list[RawEvent] = [(42, pack_u8(0))]
+    if name is not None:
+        events.append((204, pack_text(name)))
+    events.append((236, _FLAGS))
+    for index in range(10):  # A slot's plugin events come before its index.
+        if slots and index in slots:
+            internal_name, slot_name = slots[index]
+            events += [(201, pack_text(internal_name)), (203, pack_text(slot_name))]
+        events.append((98, pack_u16(index)))
+    if routing is not None:
+        events.append((235, bytes(routing)))
+    events += [
+        (165, pack_i32(3)),
+        (166, pack_i32(1)),
+        (49, pack_u8(0)),
+        (154, pack_i32(input)),
+        (147, pack_i32(output)),
+    ]
+    return events
+
+
+def fl2024_mixer(*blocks: list[RawEvent], params: bytes = b"") -> list[RawEvent]:
+    """A mixer as FL Studio 24.2.99+ saves it: master first, "current" insert last."""
+    events: list[RawEvent] = [(29, pack_u8(1)), (103, pack_u16(len(blocks)))]
+    events += itertools.chain.from_iterable(blocks)
+    if params:
+        events.append((225, params))
+    return events
 
 
 def get_insert(preset: str):
@@ -34,12 +80,12 @@ def test_insert_color():
     assert get_insert("colored.fst").color == RGBA.from_bytes(bytes((255, 20, 20, 0)))
 
 
-def test_insert_dock(inserts: tuple[Insert, ...]):
-    sends = (101, 102, 103, 104)
-    for insert in inserts:
-        if insert.name in ("Docked left", "Master"):
+def test_insert_dock(mixer: Mixer):
+    sends = (100, 101, 102, 103)
+    for insert in mixer:
+        if insert.name in ("Docked left", "Master") or insert.number == -1:
             assert insert.dock == InsertDock.Left
-        elif insert.name == "Docked right" or insert.iid in sends:
+        elif insert.name == "Docked right" or insert.number in sends:
             assert insert.dock == InsertDock.Right
         else:
             assert insert.dock == InsertDock.Middle
@@ -88,3 +134,41 @@ def test_mixer(mixer: Mixer):
     assert mixer.apdc
     assert len(mixer) == mixer.max_inserts == 127
     assert mixer.max_slots == 10
+
+
+def test_inserts_numbered_like_fl_studio(project: Project):
+    mixer = project.mixer
+    inserts = tuple(mixer)
+    assert inserts[0].name == mixer[0].name == "Master"
+    assert (inserts[0].number, inserts[0].iid) == (0, -1)
+    assert (inserts[1].number, inserts[1].iid) == (1, 0)
+    assert (inserts[-1].number, inserts[-1].iid) == (-1, 125)  # "current" insert
+    assert mixer[-1] == inserts[-1]
+
+    channel = project.channels["Instrument track"]
+    assert isinstance(channel, Sampler) and channel.insert == 2
+    assert mixer[2].name == "Instrument track"
+
+
+def test_insert_output_is_its_own(inserts: tuple[Insert, ...]):
+    assert inserts[0].output == 0  # Master
+    assert inserts[1].output == -1
+
+
+def test_fl2024_inserts_end_with_their_output(tmp_path: pathlib.Path):
+    blocks = (
+        insert_block(name="Master", output=10, input=20),
+        insert_block(name="Drums", routing=[1], output=11, input=21),
+        insert_block(name="Bass", routing=[1], output=12, input=22),
+        insert_block(output=13, input=23),
+    )
+    mixer = parse(tmp_path, flp_bytes(fl2024_mixer(*blocks))).mixer
+    inserts = tuple(mixer)
+    assert len(mixer) == len(inserts) == 4
+    assert [insert.name for insert in inserts] == ["Master", "Drums", "Bass", None]
+    assert [insert.output for insert in inserts] == [10, 11, 12, 13]
+    assert [insert.input for insert in inserts] == [20, 21, 22, 23]
+    assert [insert.number for insert in inserts] == [0, 1, 2, -1]
+    assert [insert.iid for insert in inserts] == [-1, 0, 1, 2]
+    assert mixer[2].name == "Bass"
+    assert mixer[-1] == inserts[-1]

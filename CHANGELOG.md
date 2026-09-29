@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TimeMarker.action`: the action of a time marker (high byte of its position).
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
+- `Insert.number`, the insert number FL Studio shows (master = 0, "current"
+  insert = -1), and `MixerID.InsertCount` (FL Studio 24.2.99+).
+- `EventTree.split()`, for event groups closed by a terminating event.
 
 ### Changed
 
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It returns `None` until the flag which mutes an item is confirmed.
 - `TrackEvent["height"]` holds the stored float (`1.0` for 100%) instead of a
   string; `Track.height` still gets and sets a percentage string like `"100%"`.
+- `Mixer[i]` looks inserts up by `Insert.number`, as documented: `mixer[0]` is
+  master and `mixer[-1]` the "current" insert.
 
 ### Removed
 
@@ -58,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a `UnicodeWarning`, and the text is saved back unchanged unless it is set.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
+- Each insert ends with its own `InsertID.Output`: `Insert.output` was the one of
+  the previous insert. The mixer yields as many inserts as FL Studio 24.2.99+
+  stores (`MixerID.InsertCount`).
 
 ## [2.2.1] - 2023-06-05
 
