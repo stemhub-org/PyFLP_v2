@@ -6,6 +6,10 @@ name: dispatch-stemhub-sync
 #
 # Needs the STEMHUB_REPO_DISPATCH_TOKEN secret: a token allowed to write the
 # contents of stemhub-org/Stemhub. Without it the job only logs a warning.
+#
+# Add that secret only once StemHub's main branch carries the sync workflow
+# that targets dev: repository_dispatch runs the copy on StemHub's default
+# branch, and an older copy there would open the bump pull request to main.
 
 on:
   push:
