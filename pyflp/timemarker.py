@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import enum
+from typing import Final
 
 from pyflp._descriptors import EventProp
 from pyflp._events import DWORD, TEXT, EventEnum, U8Event, U32Event
@@ -32,12 +33,16 @@ class TimeMarkerID(EventEnum):
     Name = TEXT + 13
 
 
+POSITION_MASK: Final = 0xFFFFFF
+"""Bits of :attr:`TimeMarkerID.Position` holding the position; its high byte is the action."""
+
+
 class TimeMarkerType(enum.IntEnum):
     Marker = 0
-    """Normal text marker."""
+    """Normal text marker, or a marker with an action other than a time signature."""
 
     Signature = 134217728
-    """Used for time signature markers."""
+    """Used for time signature markers (action ``8``)."""
 
 
 class TimeMarker(EventModel, ModelReprMixin):
@@ -62,21 +67,29 @@ class TimeMarker(EventModel, ModelReprMixin):
     numerator = EventProp[int](TimeMarkerID.Numerator)
 
     @property
-    def position(self) -> int | None:
-        if TimeMarkerID.Position in self.events.ids:
-            event = self.events.first(TimeMarkerID.Position)
-            if event.value < TimeMarkerType.Signature:
-                return event.value
-            return event.value - TimeMarkerType.Signature
+    def action(self) -> int | None:
+        """The action FL Studio takes at the marker, ``0`` for none.
 
-    @property
-    def type(self) -> TimeMarkerType | None:
-        """The action with which a time marker is associated.
+        ``8`` makes it a time signature marker. The other values stand for the
+        other actions (pause, loop, recording, ...); which is which isn't mapped
+        yet.
 
         [![](https://bit.ly/3RDM1yn)]()
         """
         if TimeMarkerID.Position in self.events.ids:
-            event = self.events.first(TimeMarkerID.Position)
-            if event.value >= TimeMarkerType.Signature:
+            return self.events.first(TimeMarkerID.Position).value >> 24
+
+    @property
+    def position(self) -> int | None:
+        """PPQ-dependant quantity."""
+        if TimeMarkerID.Position in self.events.ids:
+            return self.events.first(TimeMarkerID.Position).value & POSITION_MASK
+
+    @property
+    def type(self) -> TimeMarkerType | None:
+        """Whether a time marker is a time signature or not; see :attr:`action`."""
+        action = self.action
+        if action is not None:
+            if action << 24 == TimeMarkerType.Signature:
                 return TimeMarkerType.Signature
             return TimeMarkerType.Marker

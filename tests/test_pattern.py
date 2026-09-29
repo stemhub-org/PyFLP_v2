@@ -31,7 +31,14 @@ def test_pattern_names(patterns: Patterns):
 
 
 def test_pattern_timemarkers(patterns: Patterns):
-    assert len(tuple(patterns["Timemarkers"].timemarkers)) == 5
+    markers = tuple(patterns["Timemarkers"].timemarkers)
+    assert len(markers) == 5
+    assert [m.position for m in markers] == [0, 576, 1056, 1440, 1824]
+    assert [m.action for m in markers] == [8, 9, 8, 10, 6]
+    assert [str(m) for m in markers[:3:2]] == [
+        "Signature '3/2' (3/2) @ 0",
+        "Signature '4/4' (4/4) @ 1056",
+    ]
 
 
 def test_empty_pattern():

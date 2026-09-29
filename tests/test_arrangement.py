@@ -18,6 +18,7 @@ from pyflp.arrangement import (
     TrackPress,
     TrackSync,
 )
+from pyflp.timemarker import TimeMarkerType
 
 
 def test_arrangements(arrangements: Arrangements):
@@ -190,6 +191,16 @@ def test_second_arrangement(arrangement: Callable[[int], Arrangement]):
     assert arr.name == "Just timemarkers"
     assert len(tuple(arr.timemarkers)) == 11
     assert len(tuple(arr.tracks)) == 500
+
+
+def test_timemarker_positions_and_actions(arrangement: Callable[[int], Arrangement]):
+    markers = tuple(arrangement(1).timemarkers)
+    assert [m.position for m in markers] == [384 * bar for bar in range(11)]
+    assert [m.action for m in markers] == [5, 8, 8, 0, 4, 0, 3, 9, 10, 1, 2]
+    assert [m.type for m in markers] == [
+        TimeMarkerType.Signature if m.action == 8 else TimeMarkerType.Marker for m in markers
+    ]
+    assert [(m.numerator, m.denominator) for m in markers[1:3]] == [(2, 8), (4, 4)]
 
 
 # What follows the 48 bytes of known fields in track data, as FL Studio writes it.

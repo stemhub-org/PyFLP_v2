@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `PLItemBase.item_flags`: the raw flags of a playlist item.
+- `TimeMarker.action`: the action of a time marker (high byte of its position).
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
 
@@ -29,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which mutes an item is known.
 - Track data (61, 66 or 70 bytes) saves back unchanged: `Track.height` used to
   truncate the stored float to a whole percentage (and now rounds it).
+- `TimeMarker.position` drops the action held in the high byte: markers with an
+  action other than a time signature had huge positions, and those above 8 were
+  reported as time signatures.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 
