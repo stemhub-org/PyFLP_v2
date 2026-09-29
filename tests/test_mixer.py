@@ -11,7 +11,16 @@ from pyflp.plugin import FruityFastDist, VSTPlugin
 from pyflp.project import Project
 
 from .conftest import get_model
-from .synthetic import RawEvent, flp_bytes, pack_i32, pack_text, pack_u8, pack_u16, parse
+from .synthetic import (
+    RawEvent,
+    flp_bytes,
+    mixer_param,
+    pack_i32,
+    pack_text,
+    pack_u8,
+    pack_u16,
+    parse,
+)
 
 _FLAGS = bytes(4) + pack_i32(0x0C) + bytes(4)  # EnableEffects | Enabled
 
@@ -209,3 +218,55 @@ def test_fl2024_slot_plugins(tmp_path: pathlib.Path):
     insert = parse(tmp_path, flp_bytes(fl2024_mixer(*blocks))).mixer[1]
     assert [slot.name for slot in insert] == [None, "Gain", None, "Send", *[None] * 6]
     assert [slot.index for slot in insert] == list(range(10))
+
+
+def test_insert_params(mixer: Mixer):
+    assert mixer[0].volume == 12800
+    assert mixer["Zero Volume"].volume == 0
+    assert (mixer["100% L"].pan, mixer["100% R"].pan) == (-6400, 6400)
+    assert mixer["100% mono"].stereo_separation == 64
+    assert mixer["100% separated"].stereo_separation == -64
+    assert mixer["Post EQ"].eq.low.gain == 1800
+
+
+def test_slot_params(mixer: Mixer):
+    effect_slots = mixer["Effect slots"]
+    assert [slot.mix for slot in effect_slots][:5] == [12800, 12800, 12800, 12800, 0]
+    assert all(slot.enabled is True for slot in effect_slots)
+    assert mixer["Bypassed"][0].mix == 0
+
+
+def test_fl2024_mixer_params(tmp_path: pathlib.Path):
+    params = b"".join(
+        (
+            mixer_param(256, 0, 0, 0, 12800),  # Not an insert's
+            mixer_param(448, 0, 192, 31, 12000),  # Master
+            mixer_param(449, 0, 192, 31, 11000),
+            mixer_param(449, 0, 193, 31, -3200),
+            mixer_param(449, 0, 194, 31, 20),
+            mixer_param(449, 2, 0, 31, 0),
+            mixer_param(449, 2, 1, 31, 6400),
+            mixer_param(450, 0, 192, 31, 10000),
+            mixer_param(450, 0, 1, 32, 5000),  # Send level to insert 1
+            mixer_param(949, 0, 192, 31, 9000),  # "Current" insert
+        )
+    )
+    blocks = (insert_block(), insert_block(routing=[1]), insert_block(routing=[1, 1]))
+    project = parse(tmp_path, flp_bytes(fl2024_mixer(*blocks, insert_block(), params=params)))
+    mixer = project.mixer
+    assert [insert.volume for insert in mixer] == [12000, 11000, 10000, 9000]
+    assert (mixer[1].pan, mixer[1].stereo_separation) == (-3200, 20)
+    assert (mixer[1][2].enabled, mixer[1][2].mix) == (False, 6400)
+    assert (mixer[1][0].enabled, mixer[1][0].mix) == (None, None)
+    assert mixer[2][0].mix is None
+
+    mixer[1][2].enabled = True
+    mixer[1][2].mix = 12800
+    mixer[1].volume = 8000
+    event = bytes(project.events.first(MixerID.Params))
+    for item in (
+        mixer_param(449, 2, 0, 31, 1),
+        mixer_param(449, 2, 1, 31, 12800),
+        mixer_param(449, 0, 192, 31, 8000),
+    ):
+        assert item in event

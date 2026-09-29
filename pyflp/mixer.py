@@ -18,7 +18,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 from collections import defaultdict
-from typing import Any, DefaultDict, Iterator, NamedTuple, cast
+from typing import Any, Callable, DefaultDict, Dict, Iterator, NamedTuple, cast
 
 import construct as c
 import construct_typed as ct
@@ -86,7 +86,7 @@ class _InsertFlags(enum.IntFlag):
 class _MixerParamsID(ct.EnumBase):
     SlotEnabled = 0
     SlotMix = 1
-    RouteVolStart = 64  # 64 - 191 are send level events
+    RouteVolStart = 64  # 64 - 191 are send levels to inserts 0 - 127, before 24.2.99
     Volume = 192
     Pan = 193
     StereoSeparation = 194
@@ -119,14 +119,42 @@ class _InsertItems:
         default_factory=lambda: defaultdict(dict)
     )
     own: dict[int, dict[str, Any]] = dataclasses.field(default_factory=dict)
+    sends: dict[int, dict[str, Any]] = dataclasses.field(default_factory=dict)
+    """Send levels by destination :attr:`Insert.number`."""
+
+
+_KIND_SEND_LEVEL = 32
+"""``MixerParamsEvent`` item kind of send levels since FL Studio 24.2.99."""
+
+# Items are grouped by insert, under a key: ``channel_data >> 6``.
+_KEY_MASTER = 128
+"""Key of master before FL Studio 24.2.99; insert *n* uses ``_KEY_MASTER + n``."""
+
+_KEY_MASTER_24_2 = 448
+"""Key of master since FL Studio 24.2.99; insert *n* uses ``_KEY_MASTER_24_2 + n``."""
+
+_KEY_CURRENT_24_2 = 949
+"""Key of the "current" insert since FL Studio 24.2.99.
+
+Before, the "current" insert is keyed like the others, by its position.
+"""
 
 
 class MixerParamsEvent(ListEventBase):
+    """Parameters of all inserts and their slots: 12 bytes each.
+
+    ``channel_data`` holds the insert's key (upper 10 bits, see :class:`Mixer`)
+    and the slot index (lower 6 bits). ``kind`` is 31 for insert and slot
+    parameters and 32 for send levels since FL Studio 24.2.99, whose ``id`` is
+    the destination insert. One item, of kind 0 and key 256, belongs to no
+    insert; its meaning is unknown.
+    """
+
     STRUCT = c.GreedyRange(
         c.Struct(
             "_u4" / c.Bytes(4),  # 4
             "id" / StdEnum[_MixerParamsID](c.Byte),  # 5
-            "_u1" / c.Byte,  # 6
+            "kind" / c.Byte,  # 6
             "channel_data" / c.Int16ul,  # 8
             "msg" / c.Int32sl,  # 12
         )
@@ -135,15 +163,18 @@ class MixerParamsEvent(ListEventBase):
     def __init__(self, id: Any, data: bytearray) -> None:
         super().__init__(id, data)
         self.items_: DefaultDict[int, _InsertItems] = defaultdict(_InsertItems)
+        """Items by insert key (``channel_data >> 6``)."""
 
         for item in self.data:
-            insert_idx = (item["channel_data"] >> 6) & 0x7F
-            slot_idx = item["channel_data"] & 0x3F
-            insert = self.items_[insert_idx]
+            insert = self.items_[item["channel_data"] >> 6]
             id = item["id"]
 
-            if id in (_MixerParamsID.SlotEnabled, _MixerParamsID.SlotMix):
-                insert.slots[slot_idx][id] = item
+            if item["kind"] == _KIND_SEND_LEVEL:
+                insert.sends[int(id)] = item
+            elif id in (_MixerParamsID.SlotEnabled, _MixerParamsID.SlotMix):
+                insert.slots[item["channel_data"] & 0x3F][id] = item
+            elif _MixerParamsID.RouteVolStart <= id < _MixerParamsID.Volume:
+                insert.sends[id - _MixerParamsID.RouteVolStart] = item
             else:
                 insert.own[id] = item
 
@@ -301,16 +332,35 @@ class _MixerParamProp(RWProperty[T]):
         if owner is None:
             return NotImplemented
 
-        for id, item in cast(_InsertItems, ins._kw["params"]).own.items():
-            if id == self._id:
-                return item["msg"]
+        item = ins._params.own.get(self._id)
+        if item is not None:
+            return item["msg"]
 
     def __set__(self, ins: Insert, value: T) -> None:
-        for id, item in cast(_InsertItems, ins._kw["params"]).own.items():
-            if id == self._id:
-                item["msg"] = value
-                return
-        raise PropertyCannotBeSet(self._id)
+        item = ins._params.own.get(self._id)
+        if item is None:
+            raise PropertyCannotBeSet(self._id)
+        item["msg"] = value
+
+
+class _SlotParamProp(RWProperty[T]):
+    def __init__(self, id: int, type: Callable[[int], T]) -> None:
+        self._id = id
+        self._type = type
+
+    def __get__(self, ins: Slot, owner: object = None) -> T | None:
+        if owner is None:
+            return NotImplemented
+
+        item = cast(Dict[int, Dict[str, Any]], ins._kw["params"]).get(self._id)
+        if item is not None:
+            return self._type(item["msg"])
+
+    def __set__(self, ins: Slot, value: T) -> None:
+        item = cast(Dict[int, Dict[str, Any]], ins._kw["params"]).get(self._id)
+        if item is None:
+            raise PropertyCannotBeSet(self._id)
+        item["msg"] = int(cast(int, value))
 
 
 class Slot(EventModel):
@@ -333,19 +383,22 @@ class Slot(EventModel):
     internal_name = EventProp[str](PluginID.InternalName)
     """'Fruity Wrapper' for VST/AU plugins or factory name for native plugins."""
 
-    enabled = _MixerParamProp[bool](_MixerParamsID.SlotEnabled)
-    """![](https://bit.ly/3eN4Ile)"""
+    enabled = _SlotParamProp(_MixerParamsID.SlotEnabled, bool)
+    """Whether the effect in the slot is on.
+
+    ![](https://bit.ly/3eN4Ile)
+    """
 
     icon = EventProp[int](PluginID.Icon)
     index = EventProp[int](SlotID.Index)
-    mix = _MixerParamProp[int](_MixerParamsID.SlotMix)
-    """Dry/Wet mix. Defaults to maximum value.
+    mix = _SlotParamProp(_MixerParamsID.SlotMix, int)
+    """Dry/Wet mix. Linear. Defaults to maximum value.
 
     | Type    | Value | Representation |
     |---------|-------|----------------|
-    | Min     | -6400 | 100% left      |
-    | Max     | 6400  | 100% right     |
-    | Default | 0     | Centred        |
+    | Min     | 0     | 0% (dry)       |
+    | Max     | 12800 | 100% (wet)     |
+    | Default | 12800 | 100% (wet)     |
     """
 
     name = EventProp[str](PluginID.Name)
@@ -490,7 +543,7 @@ class Insert(EventModel, ModelCollection[Slot]):
 
         ![](https://bit.ly/3RUCQt6)
         """
-        return InsertEQ(self._kw["params"])
+        return InsertEQ(self._params)
 
     icon = EventProp[int](InsertID.Icon)
     """Internal ID of the icon shown beside ``name``.
@@ -636,10 +689,15 @@ class Mixer(EventModel, ModelCollection[Insert]):
         for position, ed in enumerate(blocks):
             # A project has at least master and the "current" insert,
             # an insert preset only the insert it was saved from.
-            number = -1 if count > 1 and position == count - 1 else position
-            kw: _InsertKW = {"iid": position - 1, "number": number, "max_slots": self.max_slots}
-            if position in params:
-                kw["params"] = params[position]
+            current = count > 1 and position == count - 1
+            kw: _InsertKW = {
+                "iid": position - 1,
+                "number": -1 if current else position,
+                "max_slots": self.max_slots,
+            }
+            key = self._params_key(position, current)
+            if key in params:
+                kw["params"] = params[key]
             yield Insert(ed, **kw)
 
     def __len__(self) -> int:
@@ -653,6 +711,12 @@ class Mixer(EventModel, ModelCollection[Insert]):
         if InsertID.Flags not in self.events.ids:
             raise NoModelsFound
         return self._insert_count(self.events.count(InsertID.Flags))
+
+    def _params_key(self, position: int, current: bool) -> int:
+        """Key of the :attr:`MixerID.Params` items of the insert at ``position``."""
+        if MixerID.InsertCount in self.events.ids:  # 24.2.99+
+            return _KEY_CURRENT_24_2 if current else _KEY_MASTER_24_2 + position
+        return _KEY_MASTER + position
 
     def _insert_count(self, found: int) -> int:
         """:attr:`MixerID.InsertCount` if stored (24.2.99+), else ``found``."""

@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stores (`MixerID.InsertCount`).
 - An effect slot holds the plugin events before its `SlotID.Index`: slot *n*
   showed the plugin of slot *n + 1*.
+- Mixer params (`MixerID.Params`) reach the right insert in FL Studio 24.2.99+
+  projects, whose inserts use other keys, and send levels are no longer taken
+  for slot parameters. `Slot.enabled` and `Slot.mix` (dry/wet, 0 - 12800) no
+  longer raise `AttributeError`.
 
 ## [2.2.1] - 2023-06-05
 

@@ -101,9 +101,9 @@ def playlist_item(
     return item
 
 
-def mixer_param(key: int, slot: int, id: int, id_high: int, value: int) -> bytes:
+def mixer_param(key: int, slot: int, id: int, kind: int, value: int) -> bytes:
     """One 12-byte item of ``MixerID.Params``; ``key`` is ``channel_data >> 6``."""
-    return struct.pack("<IBBHi", 0, id, id_high, (key << 6) | slot, value)
+    return struct.pack("<IBBHi", 0, id, kind, (key << 6) | slot, value)
 
 
 def flp(*events: bytes, channel_count: int = 0, ppq: int = 96) -> bytes:
