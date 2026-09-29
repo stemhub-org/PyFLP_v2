@@ -13,16 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `PLItemBase.item_flags`: the raw flags of a playlist item.
+- `PlaylistEvent.item_size()`: the size of a playlist item in a project saved by
+  a given FL Studio version, and the `version=` keyword argument of
+  `PlaylistEvent`, which `pyflp.parse` passes.
 - `TimeMarker.action`: the action of a time marker (high byte of its position).
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
 
 ### Changed
 
-- Setting `PLItemBase.offsets` checks the pair at once instead of failing when
+- `PatternPLItem.offsets` are int32 ticks, typed `tuple[int, int]`: floats fail.
+  Setting `PLItemBase.offsets` checks the pair at once instead of failing when
   the project is saved: a `PatternPLItem` takes `int` ticks and a `ChannelPLItem`
   `float` (or `int`), else `TypeError`; values out of the int32 or float32 range
-  raise `ValueError`. `PatternPLItem.offsets` is typed `tuple[int, int]`.
+  raise `ValueError`.
+- `PLItemBase.muted` has no setter any more: assigning it raises `AttributeError`.
+  It returns `None` until the flag which mutes an item is confirmed.
+- `TrackEvent["height"]` holds the stored float (`1.0` for 100%) instead of a
+  string; `Track.height` still gets and sets a percentage string like `"100%"`.
+
+### Removed
+
+- `pyflp.arrangement.HeightAdapter`: `Track.height` converts the float itself.
 
 ### Fixed
 
