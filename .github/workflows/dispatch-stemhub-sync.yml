@@ -1,21 +1,34 @@
 name: dispatch-stemhub-sync
 
+# Tells StemHub that main moved. StemHub's sync-pyflp-submodule workflow
+# listens for this event and opens a pull request to its dev branch that
+# bumps the backend/vendor/PyFLP_v2 submodule.
+#
+# Needs the STEMHUB_REPO_DISPATCH_TOKEN secret: a token allowed to write the
+# contents of stemhub-org/Stemhub. Without it the job only logs a warning.
+
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
 
 jobs:
   dispatch:
-    if: github.repository == 'aernw1/PyFLP_enhanced'
+    if: github.repository == 'stemhub-org/PyFLP_v2'
     runs-on: ubuntu-latest
+    env:
+      DISPATCH_TOKEN: ${{ secrets.STEMHUB_REPO_DISPATCH_TOKEN }}
     steps:
+      - name: Report a missing token
+        if: env.DISPATCH_TOKEN == ''
+        run: echo "::warning::STEMHUB_REPO_DISPATCH_TOKEN is not set, so StemHub was not notified"
       - name: Trigger StemHub submodule update
+        if: env.DISPATCH_TOKEN != ''
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.STEMHUB_REPO_DISPATCH_TOKEN }}
-          repository: aernw1/StemHub
+          token: ${{ env.DISPATCH_TOKEN }}
+          repository: stemhub-org/Stemhub
           event-type: pyflp_upstream_push
           client-payload: |
             {
