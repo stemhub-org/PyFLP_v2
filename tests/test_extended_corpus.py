@@ -2,6 +2,17 @@
 
 Skipped otherwise. Projects which aren't ours to share (FL Studio demo songs,
 user projects) must stay out of the repository; point this at them instead.
+
+Projects from FL Studio 12.9 to 25.2.4 pass both tests. They rely on these
+parsing fixes, without which FL Studio 2024 and 2025 projects fail or come out
+wrong: event 172 read as 3 bytes (FL Studio 25.2.3+ projects, where 4 bytes
+shift every later event), playlist items sized by the FL Studio version (80
+bytes from 24.2) and text which isn't valid UTF-16 decoded with a warning (seen
+in FL Studio 25.1 comments). :func:`test_project` also relies on pattern clip
+offsets and track data saving back unchanged. :func:`test_mixer` relies on the
+mixer fixes: inserts ending with their output, slots closed by their index,
+mixer params mapped by key layout, routes read from the routing flags and
+channel inserts read from ``ChannelID.RoutedToInsert`` (event 104).
 """
 
 from __future__ import annotations
