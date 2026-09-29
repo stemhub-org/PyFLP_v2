@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   insert = -1), and `MixerID.InsertCount` (FL Studio 24.2.99+).
 - `EventTree.split()`, for event groups closed by a terminating event.
 - `InsertRoute`, the destination and send level of an insert's route.
+- Events of FL Studio 24.2.99+ projects: `ChannelID.RoutedToInsert` (event 104),
+  and ids whose meaning is unknown, kept as `ChannelID._50`, `_51`, `_170`,
+  `InsertID._42`, `_49`, `_165`, `_166` and `ProjectID._169`.
 
 ### Changed
 
@@ -76,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projects, whose inserts use other keys, and send levels are no longer taken
   for slot parameters. `Slot.enabled` and `Slot.mix` (dry/wet, 0 - 12800) no
   longer raise `AttributeError`.
+- `Channel.insert` of FL Studio 24.2.99+ projects, which store it in
+  `ChannelID.RoutedToInsert` instead of `ChannelID.RoutedTo`.
 
 ## [2.2.1] - 2023-06-05
 

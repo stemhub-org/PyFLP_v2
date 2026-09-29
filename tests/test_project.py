@@ -7,7 +7,11 @@ import textwrap
 import pytest
 
 import pyflp
-from pyflp.project import VALID_PPQS, FileFormat, FLVersion, PanLaw, Project
+from pyflp.channel import ChannelID
+from pyflp.mixer import InsertID, MixerID
+from pyflp.project import VALID_PPQS, FileFormat, FLVersion, PanLaw, Project, ProjectID
+
+from .synthetic import fl2024_channel, flp_bytes, pack_i32, pack_text, pack_u8, pack_u16, parse
 
 
 def test_project(project: Project):
@@ -65,3 +69,42 @@ def test_null_check(project: Project, tmp_path: pathlib.Path):
     b2 = open(tmp_path / "null_check.flp", "rb").read()
     # result = b1 == b2  # ! Don't compare 2 big bytes objects in pytest EVER
     assert b1 == b2
+
+
+def test_fl2024_events(tmp_path: pathlib.Path):
+    flags = bytes(4) + pack_i32(0x0C) + bytes(4)
+    insert = [
+        (42, pack_u8(0)),
+        (236, flags),
+        (165, pack_i32(3)),
+        (166, pack_i32(1)),
+        (49, pack_u8(0)),
+    ]
+    insert += [(154, pack_i32(-1)), (147, pack_i32(-1))]
+    events = [
+        (169, pack_i32(7)),
+        (231, pack_text("Unsorted")),
+        *fl2024_channel(insert=1),
+        (29, pack_u8(1)),
+        (103, pack_u16(2)),
+        *insert,
+        *insert,
+    ]
+    data = flp_bytes(events, channel_count=1)
+    project = parse(tmp_path, data)
+    assert {event.id for event in project.events} >= {
+        ProjectID._169,
+        ChannelID.RoutedToInsert,
+        ChannelID._50,
+        ChannelID._51,
+        ChannelID._170,
+        MixerID.InsertCount,
+        InsertID._42,
+        InsertID._165,
+        InsertID._166,
+        InsertID._49,
+    }
+    assert project.events.first(ChannelID._170).value == -1
+
+    pyflp.save(project, tmp_path / "saved.flp")
+    assert (tmp_path / "saved.flp").read_bytes() == data

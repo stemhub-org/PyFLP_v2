@@ -106,6 +106,19 @@ def mixer_param(key: int, slot: int, id: int, kind: int, value: int) -> bytes:
     return struct.pack("<IBBHi", 0, id, kind, (key << 6) | slot, value)
 
 
+def fl2024_channel(*, iid: int = 0, insert: int = 0) -> list[RawEvent]:
+    """A sampler channel as FL Studio 25.2 saves it, without most of its events."""
+    return [
+        (64, pack_u16(iid)),  # ChannelID.New
+        (21, pack_u8(0)),  # ChannelID.Type: sampler
+        (145, pack_i32(0)),  # ChannelID.GroupNum
+        (104, pack_u16(insert)),
+        (50, pack_u8(1)),
+        (170, pack_i32(-1)),
+        (51, pack_u8(0)),
+    ]
+
+
 def flp(*events: bytes, channel_count: int = 0, ppq: int = 96) -> bytes:
     """An FLP file: header chunk, then a data chunk holding ``events``."""
     data = b"".join(events)

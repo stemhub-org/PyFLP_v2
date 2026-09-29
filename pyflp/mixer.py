@@ -38,7 +38,9 @@ from pyflp._events import (
     I32Event,
     ListEventBase,
     StructEventBase,
+    U8Event,
     U16Event,
+    U32Event,
 )
 from pyflp._models import EventModel, ModelBase, ModelCollection, ModelReprMixin, supports_slice
 from pyflp.exceptions import ModelNotFound, NoModelsFound, PropertyCannotBeSet
@@ -186,10 +188,14 @@ class MixerParamsEvent(ListEventBase):
 
 @enum.unique
 class InsertID(EventEnum):
+    _42 = (42, U8Event)  # TODO 1 when Color is stored, else 0 (21.0+)
+    _49 = (49, U8Event)  # TODO 0 so far (24.2.99+)
     Icon = (WORD + 31, I16Event)
     Output = (DWORD + 19, I32Event)
     Color = (DWORD + 21, ColorEvent)  #: 4.0+
     Input = (DWORD + 26, I32Event)
+    _165 = (DWORD + 37, U32Event)  # TODO Mostly 3 (20.99+)
+    _166 = (DWORD + 38, U32Event)  # TODO Mostly 1 (20.99+)
     Name = TEXT + 12  #: 3.5.4+
     Routing = (DATA + 27, InsertRoutingEvent)
     Flags = (DATA + 28, InsertFlagsEvent)
