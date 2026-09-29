@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Event 172 holds 3 bytes (FL Studio 25.2.3 and later) although its ID lies in the
   4 byte range; reading 4 bytes shifted every later event and lost the tempo.
+- Playlist items take 32, 60 or 80 bytes depending on the FL Studio version that
+  saved the project (80 from FL Studio 24.2.99). `pyflp.parse` passes the version
+  to `PlaylistEvent`, since the event's size can be a multiple of several of them.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 

@@ -59,6 +59,7 @@ from pyflp._events import (
 from pyflp.exceptions import HeaderCorrupted, VersionNotDetected
 from pyflp.plugin import PluginID, get_event_by_internal_name
 from pyflp.project import VALID_PPQS, FileFormat, Project, ProjectID
+from pyflp.types import FLVersion
 
 __all__ = ["parse", "save"]
 
@@ -119,6 +120,7 @@ def parse(file: pathlib.Path | str) -> Project:
 
     plug_name = None
     str_type: type[AsciiEvent] | type[UnicodeEvent] | None = None
+    version: FLVersion | None = None
     stream.seek(22)  # Back to start of events
     while stream.tell() < file_size:
         event_type: type[AnyEvent] | None = None
@@ -130,8 +132,9 @@ def parse(file: pathlib.Path | str) -> Project:
         value = stream.read(size)
 
         if id == ProjectID.FLVersion:
-            parts = value.decode("ascii").rstrip("\0").split(".")
-            if [int(part) for part in parts][0:2] >= [11, 5]:
+            parts = [int(part) for part in value.decode("ascii").rstrip("\0").split(".")]
+            version = FLVersion(*parts[:4])
+            if parts[0:2] >= [11, 5]:
                 str_type = UnicodeEvent
             else:
                 str_type = AsciiEvent
@@ -162,7 +165,11 @@ def parse(file: pathlib.Path | str) -> Project:
             else:
                 event_type = UnknownDataEvent
 
-        events.append(event_type(id, value))
+        if event_type.NEEDS_VERSION:
+            versioned: type[AnyEvent] = event_type
+            events.append(versioned(id, value, version=version))
+        else:
+            events.append(event_type(id, value))
 
     return Project(
         EventTree(init=(IndexedEvent(r, e) for r, e in enumerate(events))),

@@ -141,6 +141,12 @@ class EventBase(Generic[T]):
 
     STRUCT: c.Construct[T, T]
     ALLOWED_IDS: ClassVar[Sequence[int]] = []
+    NEEDS_VERSION: ClassVar[bool] = False
+    """Whether :func:`pyflp.parse` passes the project's FL Studio version.
+
+    It is passed as the ``version`` keyword argument, a :class:`~pyflp.types.FLVersion`, or
+    ``None`` if the project doesn't store its version.
+    """
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
         if self.ALLOWED_IDS and id not in self.ALLOWED_IDS:
@@ -385,15 +391,7 @@ class ListEventBase(EventBase[AnyListContainer], AnyList):
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
         super().__init__(id, data, **kwds)
-        self._struct_size: int | None = None
-
-        if not self.SIZES:
-            self._struct_size = self.STRUCT.subcon.sizeof()
-
-        for size in self.SIZES:
-            if not len(data) % size:
-                self._struct_size = size
-                break
+        self._struct_size = self._find_struct_size(len(data))
 
         if self._struct_size is None:  # pragma: no cover
             warnings.warn(
@@ -402,6 +400,16 @@ class ListEventBase(EventBase[AnyListContainer], AnyList):
             )
         else:
             self.data = self.value  # Akin to UserList.__init__
+
+    def _find_struct_size(self, size: int) -> int | None:
+        """Size of an item of an event of ``size`` bytes, ``None`` if none fits."""
+        if not self.SIZES:
+            return self.STRUCT.subcon.sizeof()
+
+        for item_size in self.SIZES:
+            if not size % item_size:
+                return item_size
+        return None
 
 
 class UnknownDataEvent(EventBase[bytes]):

@@ -16,7 +16,8 @@
 from __future__ import annotations
 
 import enum
-from typing import Any, Iterator, Literal, Optional, cast
+import warnings
+from typing import Any, Final, Iterator, Literal, Optional, cast
 
 import construct as c
 import construct_typed as ct
@@ -67,7 +68,19 @@ class PLSelectionEvent(StructEventBase):
     STRUCT = c.Struct("start" / c.Optional(c.Int32ul), "end" / c.Optional(c.Int32ul)).compile()
 
 
+PATTERN_BASE: Final = 20480
+"""Value of every playlist item's ``pattern_base``, added to a pattern's index."""
+
+
 class PlaylistEvent(ListEventBase):
+    """The items (clips) of an arrangement's playlist.
+
+    An item takes 32 bytes up to FL Studio 20.8, 60 bytes from FL Studio 20.99
+    (the FL Studio 21 beta) and 80 bytes from FL Studio 24.2.99 (the FL Studio
+    2025 beta). Only the version tells them apart: the size of the event can be
+    a multiple of more than one of them.
+    """
+
     STRUCT = c.GreedyRange(
         c.Struct(
             "position" / c.Int32ul,  # 4
@@ -81,13 +94,59 @@ class PlaylistEvent(ListEventBase):
             "_u2" / c.Bytes(4) * "Always (64, 100, 128, 128)",  # 24
             "start_offset" / c.Float32l,  # 28
             "end_offset" / c.Float32l,  # 32
-            "_u3" / c.If(c.this._params["new"], c.Bytes(28)) * "New in FL 21",  # 60
+            # A u32 unique to each item of the playlist first, then unknown data.
+            "_u3" / c.If(c.this._params["item_size"] >= 60, c.Bytes(28)),  # 60
+            # Usually a float32 (0.0), then a float64 (1.0) and 8 zero bytes.
+            "_u4" / c.If(c.this._params["item_size"] >= 80, c.Bytes(20)),  # 80
         )
     )
-    SIZES = [32, 60]
+    SIZES = [32, 60, 80]
+    NEEDS_VERSION = True
 
-    def __init__(self, id: EventEnum, data: bytes) -> None:
-        super().__init__(id, data, new=not len(data) % 60)
+    def __init__(self, id: EventEnum, data: bytes, version: FLVersion | None = None) -> None:
+        """
+        Args:
+            version: Decides the size of an item. Without it, the first size
+                in :attr:`SIZES` which splits ``data`` into valid items is used.
+        """
+        expected = None if version is None else self.item_size(version)
+        candidates = [size for size in self.SIZES if size != expected]
+        if expected is not None:
+            candidates.insert(0, expected)
+
+        item_size = next((size for size in candidates if self._fits(data, size)), None)
+        if item_size is None:
+            item_size = expected or self.SIZES[0]
+            warnings.warn(f"Playlist items match no known layout; assuming {item_size} byte items")
+        elif expected is not None and item_size != expected:
+            warnings.warn(
+                f"FL Studio {version} expected {expected} byte playlist items, "
+                f"found {item_size} byte ones"
+            )
+        super().__init__(id, data, item_size=item_size)
+
+    @staticmethod
+    def item_size(version: FLVersion) -> int:
+        """Size of a playlist item in a project saved by FL Studio ``version``."""
+        release = (version.major, version.minor, version.patch)
+        if release < (20, 99, 0):
+            return 32
+        if release < (24, 2, 0):
+            return 60
+        return 80
+
+    @staticmethod
+    def _fits(data: bytes, item_size: int) -> bool:
+        """Whether ``data`` splits into items of ``item_size`` bytes."""
+        if len(data) % item_size:
+            return False
+
+        base = PATTERN_BASE.to_bytes(2, "little")
+        return all(data[pos + 4 : pos + 6] == base for pos in range(0, len(data), item_size))
+
+    def _find_struct_size(self, size: int) -> int | None:
+        item_size: int = self._kwds["item_size"]
+        return None if size % item_size else item_size
 
 
 @enum.unique
