@@ -118,8 +118,18 @@ def test_insert_polarity_reversed():
     assert get_insert("polarity-reversed.fst").polarity_reversed
 
 
-def test_insert_routes(inserts: tuple[Insert, ...]):
-    assert not tuple(inserts[5].routes)
+def test_insert_routes(mixer: Mixer):
+    assert list(mixer["Audio track"].routes) == [
+        (0, None),  # No stored send level
+        (100, 0),
+        (101, 0),
+        (102, 0),
+        (103, 0),
+    ]
+    route = next(mixer["Audio track"].routes)
+    assert (route.destination, route.level) == (0, None)
+    assert not tuple(mixer["No routes"].routes)
+    assert not tuple(mixer[0].routes)
 
 
 def test_insert_stereo_separation():
@@ -270,3 +280,20 @@ def test_fl2024_mixer_params(tmp_path: pathlib.Path):
         mixer_param(449, 0, 192, 31, 8000),
     ):
         assert item in event
+
+
+def test_fl2024_insert_routes(tmp_path: pathlib.Path):
+    blocks = (
+        insert_block(),  # Master has no routing
+        insert_block(routing=[1]),
+        insert_block(routing=[1, 1]),  # Cut after the last destination
+        insert_block(),
+    )
+    params = mixer_param(450, 0, 1, 32, 5000)  # Send level of insert 2 to insert 1
+    mixer = parse(tmp_path, flp_bytes(fl2024_mixer(*blocks, params=params))).mixer
+    assert [list(insert.routes) for insert in mixer] == [
+        [],
+        [(0, None)],
+        [(0, None), (1, 5000)],
+        [],
+    ]

@@ -58,7 +58,7 @@ from pyflp.plugin import (
 )
 from pyflp.types import RGBA, FLVersion, T
 
-__all__ = ["Insert", "InsertDock", "InsertEQ", "InsertEQBand", "Mixer", "Slot"]
+__all__ = ["Insert", "InsertDock", "InsertEQ", "InsertEQBand", "InsertRoute", "Mixer", "Slot"]
 
 
 @enum.unique
@@ -110,6 +110,11 @@ class InsertFlagsEvent(StructEventBase):
 
 
 class InsertRoutingEvent(ListEventBase):
+    """Whether the insert sends to insert 0 (master), 1, 2 and so on.
+
+    Since FL Studio 24.2.99 the list ends with the last insert it sends to.
+    """
+
     STRUCT = c.GreedyRange(c.Flag)
 
 
@@ -215,6 +220,23 @@ class InsertDock(enum.Enum):
     Left = enum.auto()
     Middle = enum.auto()
     Right = enum.auto()
+
+
+class InsertRoute(NamedTuple):
+    """Where an insert sends its audio to.
+
+    See Also:
+        :attr:`Insert.routes`
+    """
+
+    destination: int
+    """The :attr:`Insert.number` of the insert receiving the audio."""
+
+    level: int | None
+    """Send level, like :attr:`Insert.volume`; None when the project stores none.
+
+    FL Studio 24.2.99+ seems to store only levels other than the default one.
+    """
 
 
 class _InsertEQBandKW(TypedDict, total=False):
@@ -585,21 +607,23 @@ class Insert(EventModel, ModelCollection[Slot]):
     """Whether phase / polarity is reversed / inverted."""
 
     @property
-    def routes(self) -> Iterator[int]:
-        """Send volumes to routed inserts.
+    def routes(self) -> Iterator[InsertRoute]:
+        """The inserts this one sends its audio to, with the send levels.
+
+        Master and the "current" insert route nowhere.
 
         *New in FL Studio v4.0*.
         """
-        items = iter(cast(InsertRoutingEvent, self.events.first(InsertID.Routing)))
-        for id, item in cast(_InsertItems, self._kw["params"]).own.items():
-            if id >= _MixerParamsID.RouteVolStart:
-                try:
-                    cond = next(items)
-                except StopIteration:
-                    continue
-                else:
-                    if cond:
-                        yield item["msg"]
+        try:
+            routing = cast(InsertRoutingEvent, self.events.first(InsertID.Routing))
+        except KeyError:
+            return
+
+        sends = self._params.sends
+        for destination, routed in enumerate(routing):
+            if routed:
+                item = sends.get(destination)
+                yield InsertRoute(destination, None if item is None else item["msg"])
 
     separator_shown = FlagProp(_InsertFlags.SeparatorShown, InsertID.Flags)
     """Whether separator is shown before the insert.

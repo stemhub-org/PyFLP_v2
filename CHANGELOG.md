@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Insert.number`, the insert number FL Studio shows (master = 0, "current"
   insert = -1), and `MixerID.InsertCount` (FL Studio 24.2.99+).
 - `EventTree.split()`, for event groups closed by a terminating event.
+- `InsertRoute`, the destination and send level of an insert's route.
 
 ### Changed
 
@@ -36,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   string; `Track.height` still gets and sets a percentage string like `"100%"`.
 - `Mixer[i]` looks inserts up by `Insert.number`, as documented: `mixer[0]` is
   master and `mixer[-1]` the "current" insert.
+- `Insert.routes` yields an `InsertRoute(destination, level)` for every insert
+  the routing (`InsertID.Routing`) sends to; it yielded values of the insert's
+  own params.
 
 ### Removed
 
