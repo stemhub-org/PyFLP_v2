@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TimeMarker.position` drops the action held in the high byte: markers with an
   action other than a time signature had huge positions, and those above 8 were
   reported as time signatures.
+- Text which isn't valid UTF-16 (like half of an emoji, seen in FL Studio 25.1
+  project comments) no longer stops `pyflp.parse`: the invalid parts read as U+FFFD
+  with a `UnicodeWarning`, and the text is saved back unchanged unless it is set.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 

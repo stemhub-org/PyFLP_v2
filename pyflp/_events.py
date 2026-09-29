@@ -356,6 +356,31 @@ class UnicodeEvent(StrEventBase):
             lambda obj, *_: obj + "\0",
         )
 
+    def __init__(self, id: EventEnum, data: bytes) -> None:
+        """
+        Text which isn't valid UTF-16, like half of an emoji, is decoded with
+        U+FFFD in place of the invalid parts and a :class:`UnicodeWarning`. Its
+        bytes are saved back unchanged as long as :attr:`value` isn't set.
+        """
+        self._invalid: tuple[bytes, str] | None = None
+        try:
+            data.decode("utf-16-le")
+        except UnicodeDecodeError as exc:
+            warnings.warn(
+                f"Event {id!r} holds invalid UTF-16 text ({exc.reason}), replaced by U+FFFD",
+                UnicodeWarning,
+            )
+            super().__init__(id, data.decode("utf-16-le", "replace").encode("utf-16-le"))
+            self._invalid = (data, self.value)
+        else:
+            super().__init__(id, data)
+
+    def __bytes__(self) -> bytes:
+        if self._invalid is not None and self.value == self._invalid[1]:
+            data = self._invalid[0]
+            return c.Byte.build(self.id) + c.VarInt.build(len(data)) + data
+        return super().__bytes__()
+
 
 class StructEventBase(EventBase[AnyContainer], AnyDict):
     """Base class for events used for storing fixed size structured data.

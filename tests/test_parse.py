@@ -52,3 +52,16 @@ def test_event_172_saves_byte_identical(tmp_path: pathlib.Path):
 def test_event_172_size_is_checked():
     with pytest.raises(InvalidEventChunkSize, match="3"):
         UnknownDataEvent(EventEnum(172), b"\x01\x01\x00\x00")
+
+
+def test_invalid_utf16_text_does_not_stop_parsing(tmp_path: pathlib.Path):
+    comments = "Mix: 🙈\rMaster: \ud83d!\0".encode("utf-16-le", "surrogatepass")
+    path = write(tmp_path, *FL_25_2_4_HEAD, event(195, comments), channel_count=1)
+
+    with pytest.warns(UnicodeWarning, match="invalid UTF-16"):
+        project = pyflp.parse(path)
+    assert project.comments == "Mix: 🙈\rMaster: \ufffd!"
+    assert project.tempo == 140.0
+
+    pyflp.save(project, tmp_path / "saved.flp")
+    assert (tmp_path / "saved.flp").read_bytes() == path.read_bytes()
