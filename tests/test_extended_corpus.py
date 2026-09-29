@@ -17,7 +17,9 @@ import pytest
 import pyflp
 from pyflp._events import ODD_SIZE_IDS, StrEventBase, fixed_size
 from pyflp.arrangement import PATTERN_BASE, ArrangementID, PlaylistEvent, TrackID
-from pyflp.project import ProjectID
+from pyflp.channel import Instrument, Sampler
+from pyflp.mixer import SlotID
+from pyflp.project import Project, ProjectID
 from pyflp.timemarker import TimeMarkerID
 
 CORPUS = os.environ.get("PYFLP_EXTENDED_CORPUS")
@@ -25,6 +27,12 @@ PATHS = sorted(pathlib.Path(CORPUS).rglob("*.flp")) if CORPUS else []
 ARRANGEMENT_IDS = {*ArrangementID, *TrackID, *TimeMarkerID, *ODD_SIZE_IDS}
 
 pytestmark = pytest.mark.skipif(not CORPUS, reason="PYFLP_EXTENDED_CORPUS is not set")
+
+
+def parse(path: pathlib.Path) -> Project:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return pyflp.parse(path)
 
 
 def raw_events(data: bytes) -> Iterator[tuple[int, bytes, int]]:
@@ -43,9 +51,7 @@ def raw_events(data: bytes) -> Iterator[tuple[int, bytes, int]]:
 @pytest.mark.parametrize("path", PATHS, ids=lambda path: path.name)
 def test_project(path: pathlib.Path):
     data = path.read_bytes()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        project = pyflp.parse(path)
+    project = parse(path)
 
     raw = list(raw_events(data))
     events = list(project.events)
@@ -65,3 +71,25 @@ def test_project(path: pathlib.Path):
 
     if items:
         assert sum(len(t) for a in project.arrangements for t in a.tracks) == items
+
+
+@pytest.mark.parametrize("path", PATHS, ids=lambda path: path.name)
+def test_mixer(path: pathlib.Path):
+    project = parse(path)
+    mixer = project.mixer
+    inserts = list(mixer)
+    numbers = [*range(len(inserts) - 1), -1]  # Master first, "current" insert last
+
+    assert len(mixer) == len(inserts)
+    assert [insert.number for insert in inserts] == numbers
+    for insert in inserts:
+        assert insert.volume is not None
+        assert len(list(insert)) == mixer.max_slots
+        for slot in insert:
+            assert list(slot.events)[-1].id == SlotID.Index
+        for route in insert.routes:
+            assert route.destination in numbers[:-1]
+
+    for channel in project.channels:
+        if isinstance(channel, (Instrument, Sampler)):
+            assert channel.insert in numbers
