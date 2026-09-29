@@ -80,9 +80,10 @@ class PlaylistEvent(ListEventBase):
     """The items (clips) of an arrangement's playlist.
 
     An item takes 32 bytes up to FL Studio 20.8, 60 bytes from FL Studio 20.99
-    (the FL Studio 21 beta) and 80 bytes from FL Studio 24.2.99 (the FL Studio
-    2025 beta). Only the version tells them apart: the size of the event can be
-    a multiple of more than one of them.
+    (the FL Studio 21 beta) and 80 bytes from FL Studio 24.2 (only files from
+    24.2.99, the FL Studio 2025 beta, and later have been seen). Only the version
+    tells them apart: the size of the event can be a multiple of more than one
+    of them.
     """
 
     STRUCT = c.GreedyRange(
@@ -201,7 +202,8 @@ class TrackEvent(StructEventBase):
         "position_sync" / c.Optional(StdEnum[TrackSync](c.Int32ul)),  # 46
         "grouped" / c.Optional(c.Flag),  # 47
         "locked" / c.Optional(c.Flag),  # 48
-        # 13 bytes in FL 12.9 (61 in all), 18 from FL 20.8 to 24.1 (66), 22 from 24.2.99 (70)
+        # 13 bytes in FL 12.9 (61 in all), 18 from FL 20.8 to 24.1 (66) and 22 from
+        # FL 24.2 (70; only files from 24.2.99 and later have been seen).
         "_u1" / c.Optional(c.GreedyBytes),
     ).compile()
 

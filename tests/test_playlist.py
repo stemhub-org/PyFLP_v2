@@ -28,6 +28,10 @@ def playlist(version: FLVersion, *items: bytes) -> PlaylistEvent:
         (FLVersion(20, 99, 3000, 3031), 60),
         (FLVersion(21, 0, 0, 3302), 60),
         (FL_24_1_0, 60),
+        # No project saved by FL Studio 24.2.0 to 24.2.98 has been seen: 24.2 on
+        # is assumed to write the 80 byte items of 24.2.99 (the FL Studio 2025 beta).
+        (FLVersion(24, 2, 0), 80),
+        (FLVersion(24, 2, 1), 80),
         (FLVersion(24, 2, 99, 4720), 80),
         (FLVersion(25, 1, 0, 4858), 80),
         (FL_25_2_4, 80),

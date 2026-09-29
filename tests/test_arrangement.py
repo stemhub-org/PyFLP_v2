@@ -207,7 +207,7 @@ def test_timemarker_positions_and_actions(arrangement: Callable[[int], Arrangeme
 TRACK_DATA_TAILS = {
     61: bytes(5) + b"\xff" * 8,  # FL Studio 12.9
     66: bytes(5) + b"\xff" * 8 + b"\x01" + bytes(4),  # FL Studio 20.8 to 24.1
-    70: bytes(5) + b"\xff" * 8 + b"\x01" + bytes(8),  # From FL Studio 24.2.99
+    70: bytes(5) + b"\xff" * 8 + b"\x01" + bytes(8),  # From FL Studio 24.2 (24.2.99+ seen)
 }
 
 
