@@ -41,6 +41,7 @@ from pyflp._events import (
     DATA,
     DWORD,
     NEW_TEXT_IDS,
+    ODD_SIZE_IDS,
     TEXT,
     WORD,
     AnyEvent,
@@ -53,10 +54,12 @@ from pyflp._events import (
     U32Event,
     UnicodeEvent,
     UnknownDataEvent,
+    fixed_size,
 )
 from pyflp.exceptions import HeaderCorrupted, VersionNotDetected
 from pyflp.plugin import PluginID, get_event_by_internal_name
 from pyflp.project import VALID_PPQS, FileFormat, Project, ProjectID
+from pyflp.types import FLVersion
 
 __all__ = ["parse", "save"]
 
@@ -117,24 +120,21 @@ def parse(file: pathlib.Path | str) -> Project:
 
     plug_name = None
     str_type: type[AsciiEvent] | type[UnicodeEvent] | None = None
+    version: FLVersion | None = None
     stream.seek(22)  # Back to start of events
     while stream.tell() < file_size:
         event_type: type[AnyEvent] | None = None
         id = EventEnum(int.from_bytes(stream.read(1), "little"))
 
-        if id < WORD:
-            value = stream.read(1)
-        elif id < DWORD:
-            value = stream.read(2)
-        elif id < TEXT:
-            value = stream.read(4)
-        else:
+        size = fixed_size(id)
+        if size is None:
             size = c.VarInt.parse_stream(stream)
-            value = stream.read(size)
+        value = stream.read(size)
 
         if id == ProjectID.FLVersion:
-            parts = value.decode("ascii").rstrip("\0").split(".")
-            if [int(part) for part in parts][0:2] >= [11, 5]:
+            parts = [int(part) for part in value.decode("ascii").rstrip("\0").split(".")]
+            version = FLVersion(*parts[:4])
+            if parts[0:2] >= [11, 5]:
                 str_type = UnicodeEvent
             else:
                 str_type = AsciiEvent
@@ -145,7 +145,9 @@ def parse(file: pathlib.Path | str) -> Project:
                 break
 
         if event_type is None:
-            if id < WORD:
+            if id in ODD_SIZE_IDS:
+                event_type = UnknownDataEvent
+            elif id < WORD:
                 event_type = U8Event
             elif id < DWORD:
                 event_type = U16Event
@@ -163,7 +165,11 @@ def parse(file: pathlib.Path | str) -> Project:
             else:
                 event_type = UnknownDataEvent
 
-        events.append(event_type(id, value))
+        if event_type.NEEDS_VERSION:
+            versioned: type[AnyEvent] = event_type
+            events.append(versioned(id, value, version=version))
+        else:
+            events.append(event_type(id, value))
 
     return Project(
         EventTree(init=(IndexedEvent(r, e) for r, e in enumerate(events))),

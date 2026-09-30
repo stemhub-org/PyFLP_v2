@@ -12,11 +12,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `PLItemBase.item_flags`: the raw flags of a playlist item.
+- `PlaylistEvent.item_size()`: the size of a playlist item in a project saved by
+  a given FL Studio version, and the `version=` keyword argument of
+  `PlaylistEvent`, which `pyflp.parse` passes.
+- `TimeMarker.action`: the action of a time marker (high byte of its position).
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
 
+### Changed
+
+- `PatternPLItem.offsets` are int32 ticks, typed `tuple[int, int]`: floats fail.
+  Setting `PLItemBase.offsets` checks the pair at once instead of failing when
+  the project is saved: a `PatternPLItem` takes `int` ticks and a `ChannelPLItem`
+  `float` (or `int`), else `TypeError`; values out of the int32 or float32 range
+  raise `ValueError`.
+- `PLItemBase.muted` has no setter any more: assigning it raises `AttributeError`.
+  It returns `None` until the flag which mutes an item is confirmed.
+- `TrackEvent["height"]` holds the stored float (`1.0` for 100%) instead of a
+  string; `Track.height` still gets and sets a percentage string like `"100%"`.
+
+### Removed
+
+- `pyflp.arrangement.HeightAdapter`: `Track.height` converts the float itself.
+
 ### Fixed
 
+- Event 172 holds 3 bytes (FL Studio 25.2.3 and later) although its ID lies in the
+  4 byte range; reading 4 bytes shifted every later event and lost the tempo.
+- Playlist items take 32, 60 or 80 bytes depending on the FL Studio version that
+  saved the project (80 from FL Studio 24.2; only files from 24.2.99 and later have
+  been seen). `pyflp.parse` passes the version to `PlaylistEvent`, since the event's
+  size can be a multiple of several of them.
+- `PatternPLItem.offsets` are ticks (`int`, `-1` if not set) instead of the
+  float reading of their bytes; `ChannelPLItem.offsets` stay floats.
+- `PLItemBase.muted` returns `None` instead of raising `KeyError`, until the flag
+  which mutes an item is known.
+- Track data (61, 66 or 70 bytes) saves back unchanged: `Track.height` used to
+  truncate the stored float to a whole percentage (and now rounds it).
+- `TimeMarker.position` drops the action held in the high byte: markers with an
+  action other than a time signature had huge positions, and those above 8 were
+  reported as time signatures.
+- Text which isn't valid UTF-16 (like half of an emoji, seen in FL Studio 25.1
+  project comments) no longer stops `pyflp.parse`: the invalid parts read as U+FFFD
+  with a `UnicodeWarning`, and the text is saved back unchanged unless it is set.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
 

@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import enum
-from typing import Any, Iterator, Literal, Optional, cast
+import struct
+import warnings
+from typing import Any, Final, Generic, Iterator, Literal, Optional, TypeVar, cast
 
 import construct as c
 import construct_typed as ct
@@ -67,7 +69,48 @@ class PLSelectionEvent(StructEventBase):
     STRUCT = c.Struct("start" / c.Optional(c.Int32ul), "end" / c.Optional(c.Int32ul)).compile()
 
 
+PATTERN_BASE: Final = 20480
+"""Value of every playlist item's ``pattern_base``, added to a pattern's index."""
+
+_IS_PATTERN_CLIP = c.this.item_index > c.this.pattern_base
+_FLOAT_MINUS_ONE: Final = -1082130432
+"""The bits of the float ``-1.0`` read as an int32; older projects' "no offset"."""
+_INT32_MIN: Final = -(2**31)
+_INT32_MAX: Final = 2**31 - 1
+
+_OffsetT = TypeVar("_OffsetT", int, float)
+
+
+def _tick_offset(value: object) -> int:
+    """``value`` as a pattern clip's offset, an int32 of ticks."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"pattern clip offsets are int ticks, not {type(value).__name__}")
+    if not _INT32_MIN <= value <= _INT32_MAX:
+        raise ValueError(f"pattern clip offset {value} is outside the int32 range")
+    return value
+
+
+def _float_offset(value: object) -> float:
+    """``value`` as a channel clip's offset, a float32."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"channel clip offsets are float, not {type(value).__name__}")
+    try:
+        struct.pack("<f", value)
+    except OverflowError:
+        raise ValueError(f"channel clip offset {value} is outside the float32 range") from None
+    return float(value)
+
+
 class PlaylistEvent(ListEventBase):
+    """The items (clips) of an arrangement's playlist.
+
+    An item takes 32 bytes up to FL Studio 20.8, 60 bytes from FL Studio 20.99
+    (the FL Studio 21 beta) and 80 bytes from FL Studio 24.2 (only files from
+    24.2.99, the FL Studio 2025 beta, and later have been seen). Only the version
+    tells them apart: the size of the event can be a multiple of more than one
+    of them.
+    """
+
     STRUCT = c.GreedyRange(
         c.Struct(
             "position" / c.Int32ul,  # 4
@@ -77,17 +120,64 @@ class PlaylistEvent(ListEventBase):
             "track_rvidx" / c.Int16ul * "Stored reversed i.e. Track 1 would be 499",  # 14
             "group" / c.Int16ul,  # 16
             "_u1" / c.Bytes(2) * "Always (120, 0)",  # 18
-            "item_flags" / c.Int16ul * "Always (64, 0)",  # 20
+            "item_flags" / c.Int16ul * "0x40 by default",  # 20
             "_u2" / c.Bytes(4) * "Always (64, 100, 128, 128)",  # 24
-            "start_offset" / c.Float32l,  # 28
-            "end_offset" / c.Float32l,  # 32
-            "_u3" / c.If(c.this._params["new"], c.Bytes(28)) * "New in FL 21",  # 60
+            # Ticks (-1: none) for pattern clips, a float (-1.0: none) for channel clips
+            "start_offset" / c.IfThenElse(_IS_PATTERN_CLIP, c.Int32sl, c.Float32l),  # 28
+            "end_offset" / c.IfThenElse(_IS_PATTERN_CLIP, c.Int32sl, c.Float32l),  # 32
+            # A u32 unique to each item of the playlist first, then unknown data.
+            "_u3" / c.If(c.this._params["item_size"] >= 60, c.Bytes(28)),  # 60
+            # Usually a float32 (0.0), then a float64 (1.0) and 8 zero bytes.
+            "_u4" / c.If(c.this._params["item_size"] >= 80, c.Bytes(20)),  # 80
         )
     )
-    SIZES = [32, 60]
+    SIZES = [32, 60, 80]
+    NEEDS_VERSION = True
 
-    def __init__(self, id: EventEnum, data: bytes) -> None:
-        super().__init__(id, data, new=not len(data) % 60)
+    def __init__(self, id: EventEnum, data: bytes, version: FLVersion | None = None) -> None:
+        """
+        Args:
+            version: Decides the size of an item. Without it, the first size
+                in :attr:`SIZES` which splits ``data`` into valid items is used.
+        """
+        expected = None if version is None else self.item_size(version)
+        candidates = [size for size in self.SIZES if size != expected]
+        if expected is not None:
+            candidates.insert(0, expected)
+
+        item_size = next((size for size in candidates if self._fits(data, size)), None)
+        if item_size is None:
+            item_size = expected or self.SIZES[0]
+            warnings.warn(f"Playlist items match no known layout; assuming {item_size} byte items")
+        elif expected is not None and item_size != expected:
+            warnings.warn(
+                f"FL Studio {version} expected {expected} byte playlist items, "
+                f"found {item_size} byte ones"
+            )
+        super().__init__(id, data, item_size=item_size)
+
+    @staticmethod
+    def item_size(version: FLVersion) -> int:
+        """Size of a playlist item in a project saved by FL Studio ``version``."""
+        release = (version.major, version.minor, version.patch)
+        if release < (20, 99, 0):
+            return 32
+        if release < (24, 2, 0):
+            return 60
+        return 80
+
+    @staticmethod
+    def _fits(data: bytes, item_size: int) -> bool:
+        """Whether ``data`` splits into items of ``item_size`` bytes."""
+        if len(data) % item_size:
+            return False
+
+        base = PATTERN_BASE.to_bytes(2, "little")
+        return all(data[pos + 4 : pos + 6] == base for pos in range(0, len(data), item_size))
+
+    def _find_struct_size(self, size: int) -> int | None:
+        item_size: int = self._kwds["item_size"]
+        return None if size % item_size else item_size
 
 
 @enum.unique
@@ -120,21 +210,13 @@ class TrackSync(ct.EnumBase):
     Auto = 6
 
 
-class HeightAdapter(ct.Adapter[float, float, str, str]):
-    def _decode(self, obj: float, *_: Any) -> str:
-        return str(int(obj * 100)) + "%"
-
-    def _encode(self, obj: str, *_: Any) -> float:
-        return int(obj[:-1]) / 100
-
-
 class TrackEvent(StructEventBase):
     STRUCT = c.Struct(
         "iid" / c.Optional(c.Int32ul),  # 4
         "color" / c.Optional(c.Int32ul),  # 8
         "icon" / c.Optional(c.Int32ul),  # 12
         "enabled" / c.Optional(c.Flag),  # 13
-        "height" / c.Optional(HeightAdapter(c.Float32l)),  # 17
+        "height" / c.Optional(c.Float32l),  # 17
         "locked_height" / c.Optional(c.Int32sl),  # 21
         "content_locked" / c.Optional(c.Flag),  # 22
         "motion" / c.Optional(StdEnum[TrackMotion](c.Int32ul)),  # 26
@@ -145,7 +227,9 @@ class TrackEvent(StructEventBase):
         "position_sync" / c.Optional(StdEnum[TrackSync](c.Int32ul)),  # 46
         "grouped" / c.Optional(c.Flag),  # 47
         "locked" / c.Optional(c.Flag),  # 48
-        "_u1" / c.Optional(c.GreedyBytes),  # * 66 as of 20.9.1
+        # 13 bytes in FL 12.9 (61 in all), 18 from FL 20.8 to 24.1 (66) and 22 from
+        # FL 24.2 (70; only files from 24.2.99 and later have been seen).
+        "_u1" / c.Optional(c.GreedyBytes),
     ).compile()
 
 
@@ -173,33 +257,67 @@ class TrackID(EventEnum):
     Data = (DATA + 30, TrackEvent)
 
 
-class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin):
+class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin, Generic[_OffsetT]):
     group = StructProp[int]()
     """Returns 0 for no group, else a group number for clips in the same group."""
+
+    item_flags = StructProp[int]()
+    """Raw flags of the item; ``0x40`` for most items.
+
+    Which of them mutes an item is not known yet, see :attr:`muted`.
+    """
 
     length = StructProp[int]()
     """PPQ-dependant quantity."""
 
-    muted = StructProp[bool]()
-    """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*."""
+    @property
+    def muted(self) -> bool | None:
+        """Whether muted / disabled in the playlist. *New in FL Studio v9.0.0*.
+
+        Always ``None`` for now: the flag of :attr:`item_flags` which mutes an
+        item hasn't been identified yet.
+        """
+        return None
 
     @property
-    def offsets(self) -> tuple[float, float]:
+    def offsets(self) -> tuple[_OffsetT, _OffsetT]:
         """Returns a ``(start, end)`` offset tuple.
 
         An offset is the distance from the item's actual start or end.
+
+        * :class:`PatternPLItem`: PPQ-dependant ticks (``int``), ``-1`` if not set.
+        * :class:`ChannelPLItem`: ``float``, ``-1.0`` if not set.
+
+        Raises:
+            TypeError: When set to anything but a pair of ``int`` (pattern clip)
+                or of ``float`` or ``int`` (channel clip).
+            ValueError: When set to more or fewer than two offsets, or to one
+                which doesn't fit in an int32 (pattern clip) or a float32.
         """
-        return (self["start_offset"], self["end_offset"])
+        start, end = self["start_offset"], self["end_offset"]
+        if isinstance(start, int) and isinstance(end, int):  # A pattern clip's ticks
+            start = -1 if start == _FLOAT_MINUS_ONE else start
+            end = -1 if end == _FLOAT_MINUS_ONE else end
+        return (start, end)
 
     @offsets.setter
-    def offsets(self, value: tuple[float, float]) -> None:
-        self["start_offset"], self["end_offset"] = value
+    def offsets(self, value: tuple[_OffsetT, _OffsetT]) -> None:
+        try:
+            start, end = value
+        except TypeError:
+            raise TypeError(f"offsets are a (start, end) pair, not {value!r}") from None
+        except ValueError:
+            raise ValueError(f"offsets are a (start, end) pair, not {value!r}") from None
+
+        is_pattern_clip = self["item_index"] > self["pattern_base"]  # As in PlaylistEvent
+        check = _tick_offset if is_pattern_clip else _float_offset
+        self["start_offset"], self["end_offset"] = check(start), check(end)
 
     position = StructProp[int]()
     """PPQ-dependant quantity."""
 
 
-class ChannelPLItem(PLItemBase, ModelReprMixin):
+class ChannelPLItem(PLItemBase[float], ModelReprMixin):
     """An audio clip or automation on the playlist of an arrangement.
 
     *New in FL Studio v2.0.1*.
@@ -215,7 +333,7 @@ class ChannelPLItem(PLItemBase, ModelReprMixin):
         self["item_index"] = channel.iid
 
 
-class PatternPLItem(PLItemBase, ModelReprMixin):
+class PatternPLItem(PLItemBase[int], ModelReprMixin):
     """A pattern block or clip on the playlist of an arrangement.
 
     *New in FL Studio v7.0.0*.
@@ -239,6 +357,16 @@ class _TrackColorProp(StructProp[RGBA]):
 
     def _set(self, ev_or_ins: Any, value: RGBA) -> None:
         super()._set(ev_or_ins, int.from_bytes(bytes(value), "little"))  # type: ignore
+
+
+class _TrackHeightProp(StructProp[str]):
+    def _get(self, ev_or_ins: Any) -> str | None:
+        value = cast(Optional[float], super()._get(ev_or_ins))
+        if value is not None:
+            return f"{round(value * 100)}%"
+
+    def _set(self, ev_or_ins: Any, value: str) -> None:
+        super()._set(ev_or_ins, int(value[:-1]) / 100)  # type: ignore
 
 
 class _TrackKW(TypedDict):
@@ -293,8 +421,8 @@ class Track(EventModel, ModelCollection[PLItemBase]):
     :guilabel:`&Group with above track`
     """
 
-    height = StructProp[str](TrackID.Data)
-    """Track height in FL's interface. Linear. :guilabel:`&Size`."""
+    height = _TrackHeightProp(TrackID.Data)
+    """Track height in FL's interface, as a percentage. Linear. :guilabel:`&Size`."""
 
     icon = StructProp[int](TrackID.Data)
     """Returns ``0`` if not set, else an internal icon ID.

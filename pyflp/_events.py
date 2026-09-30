@@ -48,6 +48,28 @@ NEW_TEXT_IDS: Final = (
     TEXT + 39,  # DisplayGroupID.Name
     TEXT + 47,  # TrackID.Name
 )
+ODD_SIZE_IDS: Final = {
+    DWORD + 44: 3,  # From FL 25.2.3; 01 01 00 so far, then TEXT holds "FL Studio <version>"
+}
+"""Fixed size events whose data size isn't the one of their ID's range."""
+
+
+def fixed_size(id: int) -> int | None:
+    """Data size of the fixed size event ``id``, or ``None`` if it is length-prefixed.
+
+    Events below ``WORD`` hold 1 byte, below ``DWORD`` 2 bytes, below ``TEXT`` 4
+    bytes, except those in :attr:`ODD_SIZE_IDS`. From ``TEXT`` on, a varint
+    holding the size of the data precedes it.
+    """
+    if id in ODD_SIZE_IDS:
+        return ODD_SIZE_IDS[id]
+    if id < WORD:
+        return 1
+    if id < DWORD:
+        return 2
+    if id < TEXT:
+        return 4
+    return None
 
 
 class _EventEnumMeta(enum.EnumMeta):
@@ -119,21 +141,20 @@ class EventBase(Generic[T]):
 
     STRUCT: c.Construct[T, T]
     ALLOWED_IDS: ClassVar[Sequence[int]] = []
+    NEEDS_VERSION: ClassVar[bool] = False
+    """Whether :func:`pyflp.parse` passes the project's FL Studio version.
+
+    It is passed as the ``version`` keyword argument, a :class:`~pyflp.types.FLVersion`, or
+    ``None`` if the project doesn't store its version.
+    """
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
         if self.ALLOWED_IDS and id not in self.ALLOWED_IDS:
             raise EventIDOutOfRange(id, *self.ALLOWED_IDS)
 
-        if id < TEXT:
-            if id < WORD:
-                expected_size = 1
-            elif id < DWORD:
-                expected_size = 2
-            else:
-                expected_size = 4
-
-            if len(data) != expected_size:
-                raise InvalidEventChunkSize(expected_size, len(data))
+        expected_size = fixed_size(id)
+        if expected_size is not None and len(data) != expected_size:
+            raise InvalidEventChunkSize(expected_size, len(data))
 
         self.id = EventEnum(id)
         self._kwds = kwds
@@ -166,14 +187,10 @@ class EventBase(Generic[T]):
     def size(self) -> int:
         """Serialised event size (in bytes)."""
 
-        if self.id >= TEXT:
+        data_size = fixed_size(self.id)
+        if data_size is None:
             return len(bytes(self))
-        elif self.id >= DWORD:
-            return 5
-        elif self.id >= WORD:
-            return 3
-        else:
-            return 2
+        return 1 + data_size
 
 
 AnyEvent: TypeAlias = EventBase[Any]
@@ -339,6 +356,31 @@ class UnicodeEvent(StrEventBase):
             lambda obj, *_: obj + "\0",
         )
 
+    def __init__(self, id: EventEnum, data: bytes) -> None:
+        """
+        Text which isn't valid UTF-16, like half of an emoji, is decoded with
+        U+FFFD in place of the invalid parts and a :class:`UnicodeWarning`. Its
+        bytes are saved back unchanged as long as :attr:`value` isn't set.
+        """
+        self._invalid: tuple[bytes, str] | None = None
+        try:
+            data.decode("utf-16-le")
+        except UnicodeDecodeError as exc:
+            warnings.warn(
+                f"Event {id!r} holds invalid UTF-16 text ({exc.reason}), replaced by U+FFFD",
+                UnicodeWarning,
+            )
+            super().__init__(id, data.decode("utf-16-le", "replace").encode("utf-16-le"))
+            self._invalid = (data, self.value)
+        else:
+            super().__init__(id, data)
+
+    def __bytes__(self) -> bytes:
+        if self._invalid is not None and self.value == self._invalid[1]:
+            data = self._invalid[0]
+            return c.Byte.build(self.id) + c.VarInt.build(len(data)) + data
+        return super().__bytes__()
+
 
 class StructEventBase(EventBase[AnyContainer], AnyDict):
     """Base class for events used for storing fixed size structured data.
@@ -374,15 +416,7 @@ class ListEventBase(EventBase[AnyListContainer], AnyList):
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
         super().__init__(id, data, **kwds)
-        self._struct_size: int | None = None
-
-        if not self.SIZES:
-            self._struct_size = self.STRUCT.subcon.sizeof()
-
-        for size in self.SIZES:
-            if not len(data) % size:
-                self._struct_size = size
-                break
+        self._struct_size = self._find_struct_size(len(data))
 
         if self._struct_size is None:  # pragma: no cover
             warnings.warn(
@@ -391,6 +425,16 @@ class ListEventBase(EventBase[AnyListContainer], AnyList):
             )
         else:
             self.data = self.value  # Akin to UserList.__init__
+
+    def _find_struct_size(self, size: int) -> int | None:
+        """Size of an item of an event of ``size`` bytes, ``None`` if none fits."""
+        if not self.SIZES:
+            return self.STRUCT.subcon.sizeof()
+
+        for item_size in self.SIZES:
+            if not size % item_size:
+                return item_size
+        return None
 
 
 class UnknownDataEvent(EventBase[bytes]):
