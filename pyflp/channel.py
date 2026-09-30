@@ -323,6 +323,8 @@ class ChannelID(EventEnum):
     RoutedTo = (22, I8Event)
     # FXProperties = 27
     IsLocked = (32, BoolEvent)  #: 12.3+
+    _50 = (50, U8Event)  # TODO Follows RoutedToInsert, mostly 1 (24.2.99+)
+    _51 = (51, U8Event)  # TODO Ends a channel, 0 so far (24.2.99+)
     New = (WORD, U16Event)
     FreqTilt = (WORD + 5, U16Event)
     FXFlags = (WORD + 6, U16Event)
@@ -347,6 +349,7 @@ class ChannelID(EventEnum):
     # _DotShift = WORD + 28
     Children = (WORD + 30, U16Event)  #: 3.4.0+
     Swing = (WORD + 33, U16Event)
+    RoutedToInsert = (WORD + 40, U16Event)  #: 24.2.99+, replaces RoutedTo
     # Echo = DWORD + 2
     RingMod = (DWORD + 3, U16TupleEvent)
     CutGroup = (DWORD + 4, U16TupleEvent)
@@ -360,6 +363,7 @@ class ChannelID(EventEnum):
     LayerFlags = (DWORD + 16, U32Event)
     GroupNum = (DWORD + 17, I32Event)
     AUSampleRate = (DWORD + 25, U32Event)
+    _170 = (DWORD + 42, I32Event)  # TODO Before _51; 0, -1 since 25.2 (24.2.99+)
     _Name = TEXT
     SamplePath = TEXT + 4
     Delay = (DATA + 1, DelayEvent)
@@ -1394,10 +1398,12 @@ class _SamplerInstrument(Channel):
     delay = NestedProp(Delay, ChannelID.Delay, ChannelID.DelayModXY, ChannelID.Parameters)
     """:menuselection:`Miscellaneous functions -> Echo delay / fat mode`"""
 
-    insert = EventProp[int](ChannelID.RoutedTo)
-    """The index of the :class:`Insert` the channel is routed to according to FL.
+    insert = EventProp[int](ChannelID.RoutedToInsert, ChannelID.RoutedTo)
+    """The :attr:`Insert.number` of the insert the channel is routed to.
 
-    "Current" insert = -1, Master = 0 and so on... till :attr:`Mixer.max_inserts`.
+    Master = 0 and so on... till :attr:`Mixer.max_inserts`.
+
+    *Changed in FL Studio v24.2.99*: Stored in a 2-byte event.
     """
 
     level_adjusts = NestedProp(LevelAdjusts, ChannelID.LevelAdjusts)

@@ -17,11 +17,9 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-from collections import defaultdict
-from typing import Any, DefaultDict, Iterator, NamedTuple, cast
+from typing import Any, Callable, Dict, Iterator, NamedTuple, cast
 
 import construct as c
-import construct_typed as ct
 from typing_extensions import NotRequired, TypedDict, Unpack
 
 from pyflp._adapters import StdEnum
@@ -31,7 +29,6 @@ from pyflp._events import (
     DWORD,
     TEXT,
     WORD,
-    AnyEvent,
     ColorEvent,
     EventEnum,
     EventTree,
@@ -39,7 +36,17 @@ from pyflp._events import (
     I32Event,
     ListEventBase,
     StructEventBase,
+    U8Event,
     U16Event,
+    U32Event,
+)
+from pyflp._mixer_params import (
+    _KEY_CURRENT_24_2,
+    _KEY_MASTER,
+    _KEY_MASTER_24_2,
+    MixerParamsEvent,
+    _InsertItems,
+    _MixerParamsID,
 )
 from pyflp._models import EventModel, ModelBase, ModelCollection, ModelReprMixin, supports_slice
 from pyflp.exceptions import ModelNotFound, NoModelsFound, PropertyCannotBeSet
@@ -59,7 +66,7 @@ from pyflp.plugin import (
 )
 from pyflp.types import RGBA, FLVersion, T
 
-__all__ = ["Insert", "InsertDock", "InsertEQ", "InsertEQBand", "Mixer", "Slot"]
+__all__ = ["Insert", "InsertDock", "InsertEQ", "InsertEQBand", "InsertRoute", "Mixer", "Slot"]
 
 
 @enum.unique
@@ -83,25 +90,6 @@ class _InsertFlags(enum.IntFlag):
     AudioTrack = 1 << 15  # Whether insert is linked to an audio track
 
 
-@enum.unique
-class _MixerParamsID(ct.EnumBase):
-    SlotEnabled = 0
-    SlotMix = 1
-    RouteVolStart = 64  # 64 - 191 are send level events
-    Volume = 192
-    Pan = 193
-    StereoSeparation = 194
-    LowGain = 208
-    MidGain = 209
-    HighGain = 210
-    LowFreq = 216
-    MidFreq = 217
-    HighFreq = 218
-    LowQ = 224
-    MidQ = 225
-    HighQ = 226
-
-
 class InsertFlagsEvent(StructEventBase):
     STRUCT = c.Struct(
         "_u1" / c.Optional(c.Bytes(4)),  # 4
@@ -111,50 +99,24 @@ class InsertFlagsEvent(StructEventBase):
 
 
 class InsertRoutingEvent(ListEventBase):
+    """Whether the insert sends to insert 0 (master), 1, 2 and so on.
+
+    Since FL Studio 24.2.99 the list ends with the last insert it sends to.
+    """
+
     STRUCT = c.GreedyRange(c.Flag)
-
-
-@dataclasses.dataclass
-class _InsertItems:
-    slots: DefaultDict[int, dict[int, dict[str, Any]]] = dataclasses.field(
-        default_factory=lambda: defaultdict(dict)
-    )
-    own: dict[int, dict[str, Any]] = dataclasses.field(default_factory=dict)
-
-
-class MixerParamsEvent(ListEventBase):
-    STRUCT = c.GreedyRange(
-        c.Struct(
-            "_u4" / c.Bytes(4),  # 4
-            "id" / StdEnum[_MixerParamsID](c.Byte),  # 5
-            "_u1" / c.Byte,  # 6
-            "channel_data" / c.Int16ul,  # 8
-            "msg" / c.Int32sl,  # 12
-        )
-    )
-
-    def __init__(self, id: Any, data: bytearray) -> None:
-        super().__init__(id, data)
-        self.items_: DefaultDict[int, _InsertItems] = defaultdict(_InsertItems)
-
-        for item in self.data:
-            insert_idx = (item["channel_data"] >> 6) & 0x7F
-            slot_idx = item["channel_data"] & 0x3F
-            insert = self.items_[insert_idx]
-            id = item["id"]
-
-            if id in (_MixerParamsID.SlotEnabled, _MixerParamsID.SlotMix):
-                insert.slots[slot_idx][id] = item
-            else:
-                insert.own[id] = item
 
 
 @enum.unique
 class InsertID(EventEnum):
+    _42 = (42, U8Event)  # TODO 1 when Color is stored, else 0 (21.0+)
+    _49 = (49, U8Event)  # TODO 0 so far (24.2.99+)
     Icon = (WORD + 31, I16Event)
     Output = (DWORD + 19, I32Event)
     Color = (DWORD + 21, ColorEvent)  #: 4.0+
     Input = (DWORD + 26, I32Event)
+    _165 = (DWORD + 37, U32Event)  # TODO Mostly 3 (20.99+)
+    _166 = (DWORD + 38, U32Event)  # TODO Mostly 1 (20.99+)
     Name = TEXT + 12  #: 3.5.4+
     Routing = (DATA + 27, InsertRoutingEvent)
     Flags = (DATA + 28, InsertFlagsEvent)
@@ -163,6 +125,9 @@ class InsertID(EventEnum):
 @enum.unique
 class MixerID(EventEnum):
     APDC = 29
+    InsertCount = (WORD + 39, U16Event)  #: 24.2.99+
+    """Number of inserts stored, counting the master and "current" inserts."""
+
     Params = (DATA + 17, MixerParamsEvent)
 
 
@@ -182,6 +147,23 @@ class InsertDock(enum.Enum):
     Left = enum.auto()
     Middle = enum.auto()
     Right = enum.auto()
+
+
+class InsertRoute(NamedTuple):
+    """Where an insert sends its audio to.
+
+    See Also:
+        :attr:`Insert.routes`
+    """
+
+    destination: int
+    """The :attr:`Insert.number` of the insert receiving the audio."""
+
+    level: int | None
+    """Send level, like :attr:`Insert.volume`; None when the project stores none.
+
+    FL Studio 24.2.99+ seems to store only levels other than the default one.
+    """
 
 
 class _InsertEQBandKW(TypedDict, total=False):
@@ -299,16 +281,35 @@ class _MixerParamProp(RWProperty[T]):
         if owner is None:
             return NotImplemented
 
-        for id, item in cast(_InsertItems, ins._kw["params"]).own.items():
-            if id == self._id:
-                return item["msg"]
+        item = ins._params.own.get(self._id)
+        if item is not None:
+            return item["msg"]
 
     def __set__(self, ins: Insert, value: T) -> None:
-        for id, item in cast(_InsertItems, ins._kw["params"]).own.items():
-            if id == self._id:
-                item["msg"] = value
-                return
-        raise PropertyCannotBeSet(self._id)
+        item = ins._params.own.get(self._id)
+        if item is None:
+            raise PropertyCannotBeSet(self._id)
+        item["msg"] = value
+
+
+class _SlotParamProp(RWProperty[T]):
+    def __init__(self, id: int, type: Callable[[int], T]) -> None:
+        self._id = id
+        self._type = type
+
+    def __get__(self, ins: Slot, owner: object = None) -> T | None:
+        if owner is None:
+            return NotImplemented
+
+        item = cast(Dict[int, Dict[str, Any]], ins._kw["params"]).get(self._id)
+        if item is not None:
+            return self._type(item["msg"])
+
+    def __set__(self, ins: Slot, value: T) -> None:
+        item = cast(Dict[int, Dict[str, Any]], ins._kw["params"]).get(self._id)
+        if item is None:
+            raise PropertyCannotBeSet(self._id)
+        item["msg"] = int(cast(int, value))
 
 
 class Slot(EventModel):
@@ -317,8 +318,8 @@ class Slot(EventModel):
     ![](https://bit.ly/3RUDtTu)
     """
 
-    def __init__(self, events: EventTree, params: list[dict[str, Any]] | None = None) -> None:
-        super().__init__(events, params=params or [])
+    def __init__(self, events: EventTree, params: dict[int, dict[str, Any]] | None = None) -> None:
+        super().__init__(events, params=params or {})
 
     def __repr__(self) -> str:
         return f"Slot (name={self.name}, iid={self.index}, plugin={self.plugin!r})"
@@ -331,19 +332,22 @@ class Slot(EventModel):
     internal_name = EventProp[str](PluginID.InternalName)
     """'Fruity Wrapper' for VST/AU plugins or factory name for native plugins."""
 
-    enabled = _MixerParamProp[bool](_MixerParamsID.SlotEnabled)
-    """![](https://bit.ly/3eN4Ile)"""
+    enabled = _SlotParamProp(_MixerParamsID.SlotEnabled, bool)
+    """Whether the effect in the slot is on.
+
+    ![](https://bit.ly/3eN4Ile)
+    """
 
     icon = EventProp[int](PluginID.Icon)
     index = EventProp[int](SlotID.Index)
-    mix = _MixerParamProp[int](_MixerParamsID.SlotMix)
-    """Dry/Wet mix. Defaults to maximum value.
+    mix = _SlotParamProp(_MixerParamsID.SlotMix, int)
+    """Dry/Wet mix. Linear. Defaults to maximum value.
 
     | Type    | Value | Representation |
     |---------|-------|----------------|
-    | Min     | -6400 | 100% left      |
-    | Max     | 6400  | 100% right     |
-    | Default | 0     | Centred        |
+    | Min     | 0     | 0% (dry)       |
+    | Max     | 12800 | 100% (wet)     |
+    | Default | 12800 | 100% (wet)     |
     """
 
     name = EventProp[str](PluginID.Name)
@@ -365,6 +369,7 @@ class Slot(EventModel):
 class _InsertKW(TypedDict):
     iid: int
     max_slots: int
+    number: NotRequired[int]
     params: NotRequired[_InsertItems]
 
 
@@ -383,7 +388,7 @@ class Insert(EventModel, ModelCollection[Slot]):
 
     # TODO Add number of used slots
     def __repr__(self) -> str:
-        return f"Insert(name={self.name!r}, iid={self.iid})"
+        return f"Insert(name={self.name!r}, number={self.number})"
 
     @supports_slice  # type: ignore
     def __getitem__(self, i: int | str) -> Slot:
@@ -403,14 +408,35 @@ class Insert(EventModel, ModelCollection[Slot]):
         raise ModelNotFound(i)
 
     @property
+    def _params(self) -> _InsertItems:
+        return self._kw.get("params", _InsertItems())
+
+    @property
     def iid(self) -> int:
-        """-1 for "current" insert, 0 for master and upto :attr:`Mixer.max_inserts`."""
+        """Position of the insert in the :class:`Mixer` minus one.
+
+        -1 for master, ``number - 1`` for the other inserts and
+        ``len(mixer) - 2`` for the "current" insert. Kept for backward
+        compatibility; :attr:`number` follows FL Studio's numbering.
+        """
         return self._kw["iid"]
 
+    @property
+    def number(self) -> int:
+        """The number FL Studio shows: 0 for master, then 1, 2 and so on.
+
+        -1 for the "current" insert, which FL Studio stores after all others.
+        """
+        return self._kw.get("number", self._kw["iid"] + 1)
+
     def __iter__(self) -> Iterator[Slot]:
-        """Iterator over the effect empty and used slots."""
-        for idx, ed in enumerate(self.events.divide(SlotID.Index, *SlotID, *PluginID)):
-            yield Slot(ed, params=self._kw["params"].slots[idx])
+        """Iterator over the effect empty and used slots.
+
+        A slot's plugin events come before its :attr:`SlotID.Index`.
+        """
+        slots = self._params.slots
+        for idx, ed in enumerate(self.events.split(SlotID.Index, *SlotID, *PluginID)):
+            yield Slot(ed, params=slots.get(idx))
 
     def __len__(self) -> int:
         try:
@@ -466,7 +492,7 @@ class Insert(EventModel, ModelCollection[Slot]):
 
         ![](https://bit.ly/3RUCQt6)
         """
-        return InsertEQ(self._kw["params"])
+        return InsertEQ(self._params)
 
     icon = EventProp[int](InsertID.Icon)
     """Internal ID of the icon shown beside ``name``.
@@ -508,21 +534,23 @@ class Insert(EventModel, ModelCollection[Slot]):
     """Whether phase / polarity is reversed / inverted."""
 
     @property
-    def routes(self) -> Iterator[int]:
-        """Send volumes to routed inserts.
+    def routes(self) -> Iterator[InsertRoute]:
+        """The inserts this one sends its audio to, with the send levels.
+
+        Master and the "current" insert route nowhere.
 
         *New in FL Studio v4.0*.
         """
-        items = iter(cast(InsertRoutingEvent, self.events.first(InsertID.Routing)))
-        for id, item in cast(_InsertItems, self._kw["params"]).own.items():
-            if id >= _MixerParamsID.RouteVolStart:
-                try:
-                    cond = next(items)
-                except StopIteration:
-                    continue
-                else:
-                    if cond:
-                        yield item["msg"]
+        try:
+            routing = cast(InsertRoutingEvent, self.events.first(InsertID.Routing))
+        except KeyError:
+            return
+
+        sends = self._params.sends
+        for destination, routed in enumerate(routing):
+            if routed:
+                item = sends.get(destination)
+                yield InsertRoute(destination, None if item is None else item["msg"])
 
     separator_shown = FlagProp(_InsertFlags.SeparatorShown, InsertID.Flags)
     """Whether separator is shown before the insert.
@@ -561,6 +589,21 @@ class Mixer(EventModel, ModelCollection[Insert]):
     """Represents the mixer which contains :class:`Insert` instances.
 
     ![](https://bit.ly/3eOsblF)
+
+    :attr:`MixerID.Params` holds the parameters of all inserts, grouped by
+    insert under a key, ``channel_data >> 6``; ``channel_data & 0x3F`` is the
+    slot of a slot parameter. Insert and slot parameters are items of kind 31.
+    The keys follow one of two layouts:
+
+    * Up to FL Studio 24.1: insert *n* (master = 0) is key ``128 + n``. The
+      "current" insert, stored last, is keyed by its position like the others:
+      254 with the 127 inserts of FL Studio 12.9 to 24.1. Send levels are kind
+      31 items whose ``id`` is ``64 + destination``.
+    * When :attr:`MixerID.InsertCount` (event 103) is stored, from FL Studio
+      24.2.99: insert *n* is key ``448 + n`` and the "current" insert key 949.
+      Send levels are kind 32 items whose ``id`` is the destination.
+
+    In both, key 256 holds a single item, of kind 0, which belongs to no insert.
     """
 
     _MAX_INSERTS = {
@@ -581,49 +624,71 @@ class Mixer(EventModel, ModelCollection[Insert]):
     # Inserts don't store their index internally.
     @supports_slice  # type: ignore
     def __getitem__(self, i: int | str | slice) -> Insert:
-        """Returns an insert with the specified index or name.
+        """Returns an insert with the specified number or name.
 
         Args:
-            i: An index between 0 to :attr:`Mixer.max_inserts` resembling the
-                one shown by FL Studio or the name of the insert. Use 0 for
-                master and -1 for "current" insert.
+            i: An :attr:`Insert.number`, i.e. the one shown by FL Studio, or
+                the name of the insert. Use 0 for master and -1 for "current"
+                insert.
 
         Raises:
             ModelNotFound: An :class:`Insert` with the specifcied name or index
                 isn't found.
         """
-        for idx, insert in enumerate(self):
-            if (isinstance(i, int) and idx == i + 1) or i == insert.name:
+        for insert in self:
+            if (isinstance(i, int) and insert.number == i) or i == insert.name:
                 return insert
         raise ModelNotFound(i)
 
     def __iter__(self) -> Iterator[Insert]:
-        def select(e: AnyEvent) -> bool | None:
-            if e.id == InsertID.Output:
-                return False
+        """Yields the inserts in the order FL Studio stores them.
 
-            if e.id in (*InsertID, *PluginID, *SlotID):
-                return True
-
+        Master comes first, then inserts 1, 2 and so on, and the "current"
+        insert last. Every insert ends with its :attr:`Insert.output`.
+        """
         params: dict[int, _InsertItems] = {}
         if MixerID.Params in self.events.ids:
             params = cast(MixerParamsEvent, self.events.first(MixerID.Params)).items_
 
-        for i, ed in enumerate(self.events.subtrees(select, self.max_inserts)):
-            if i in params:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots, params=params[i])
-            else:
-                yield Insert(ed, iid=i - 1, max_slots=self.max_slots)
+        blocks = list(self.events.split(InsertID.Output, *InsertID, *PluginID, *SlotID))
+        count = self._insert_count(len(blocks))
+        for position, ed in enumerate(blocks):
+            # A project has at least master and the "current" insert,
+            # an insert preset only the insert it was saved from.
+            current = count > 1 and position == count - 1
+            kw: _InsertKW = {
+                "iid": position - 1,
+                "number": -1 if current else position,
+                "max_slots": self.max_slots,
+            }
+            key = self._params_key(position, current)
+            if key in params:
+                kw["params"] = params[key]
+            yield Insert(ed, **kw)
 
     def __len__(self) -> int:
         """Returns the number of inserts present in the project.
+
+        This counts the master and "current" inserts too.
 
         Raises:
             NoModelsFound: No inserts could be found.
         """
         if InsertID.Flags not in self.events.ids:
             raise NoModelsFound
-        return self.events.count(InsertID.Flags)
+        return self._insert_count(self.events.count(InsertID.Flags))
+
+    def _params_key(self, position: int, current: bool) -> int:
+        """Key of the :attr:`MixerID.Params` items of the insert at ``position``."""
+        if MixerID.InsertCount in self.events.ids:  # 24.2.99+
+            return _KEY_CURRENT_24_2 if current else _KEY_MASTER_24_2 + position
+        return _KEY_MASTER + position
+
+    def _insert_count(self, found: int) -> int:
+        """:attr:`MixerID.InsertCount` if stored (24.2.99+), else ``found``."""
+        if MixerID.InsertCount in self.events.ids:
+            return self.events.first(MixerID.InsertCount).value
+        return found
 
     def __str__(self) -> str:
         return f"Mixer: {len(self)} inserts"
@@ -634,6 +699,9 @@ class Mixer(EventModel, ModelCollection[Insert]):
     @property
     def max_inserts(self) -> int:
         """Estimated max number of inserts including sends, master and current.
+
+        Since FL Studio 24.2.99, how many inserts a project stores varies:
+        ``len(mixer)`` gives it.
 
         Maximum number of slots w.r.t. FL Studio:
 

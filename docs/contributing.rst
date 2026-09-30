@@ -123,6 +123,11 @@ in a common FLP.
 1. Follow the naming scheme of the test functions, it generally follows the
    format of  ``test_{model_collection}`` *or* ``test_{model}_{descriptor}``.
 2. Create separate test assets, whenever possible.
+3. Never commit projects you may not share, like the demo songs bundled with FL
+   Studio. Build the events a test needs in the test itself instead (see
+   ``tests/synthetic.py``), and check such projects locally by pointing
+   ``PYFLP_EXTENDED_CORPUS`` to a folder holding them: ``tests/test_extended_corpus.py``
+   is skipped without it.
 
 .. |pytest-icon| image:: /img/contributing/pytest.svg
     :width: 32

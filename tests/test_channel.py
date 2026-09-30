@@ -20,6 +20,7 @@ from pyflp.channel import (
 from pyflp.project import Project
 
 from .conftest import get_model
+from .synthetic import fl2024_channel, flp_bytes, pack_text, parse
 
 CT = TypeVar("CT", bound=Channel)
 
@@ -139,6 +140,13 @@ def test_instrument_polyphony():
 
 def test_instrument_routing():
     assert load_instrument("routed.fst").insert == 125
+
+
+def test_fl2024_channel_routing(tmp_path: pathlib.Path):
+    events = [(231, pack_text("Unsorted")), *fl2024_channel(insert=3)]
+    channel = next(iter(parse(tmp_path, flp_bytes(events, channel_count=1)).channels))
+    assert isinstance(channel, Sampler)
+    assert channel.insert == 3
 
 
 def test_instrument_time():

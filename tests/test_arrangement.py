@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import struct
 from typing import Callable
 
 import pytest
 
-from pyflp._events import RGBA
+from pyflp._events import RGBA, EventTree, IndexedEvent
 from pyflp.arrangement import (
     Arrangement,
     Arrangements,
     ChannelPLItem,
     PatternPLItem,
     Track,
+    TrackEvent,
+    TrackID,
     TrackMotion,
     TrackPress,
     TrackSync,
 )
+from pyflp.timemarker import TimeMarkerType
 
 
 def test_arrangements(arrangements: Arrangements):
@@ -94,6 +98,13 @@ def test_track_items(tracks: tuple[Track, ...]):
             assert [i.position for i in track] == [p * 384 for p in range(num_items)]
         elif track.name in ("Cut pattern", "Automation"):
             num_items = 1
+
+        if track.name == "Audio track":
+            assert {i.offsets for i in track} == {(-1.0, -1.0)}
+        elif track.name == "MIDI":
+            assert {i.offsets for i in track} == {(-1, -1)}
+        elif track.name == "Cut pattern":
+            assert [i.offsets for i in track] == [(0, 1536)]
 
         assert len(track) == num_items
         assert [i.group for i in track] == [0] * num_items
@@ -180,3 +191,62 @@ def test_second_arrangement(arrangement: Callable[[int], Arrangement]):
     assert arr.name == "Just timemarkers"
     assert len(tuple(arr.timemarkers)) == 11
     assert len(tuple(arr.tracks)) == 500
+
+
+def test_timemarker_positions_and_actions(arrangement: Callable[[int], Arrangement]):
+    markers = tuple(arrangement(1).timemarkers)
+    assert [m.position for m in markers] == [384 * bar for bar in range(11)]
+    assert [m.action for m in markers] == [5, 8, 8, 0, 4, 0, 3, 9, 10, 1, 2]
+    assert [m.type for m in markers] == [
+        TimeMarkerType.Signature if m.action == 8 else TimeMarkerType.Marker for m in markers
+    ]
+    assert [(m.numerator, m.denominator) for m in markers[1:3]] == [(2, 8), (4, 4)]
+
+
+# What follows the 48 bytes of known fields in track data, as FL Studio writes it.
+TRACK_DATA_TAILS = {
+    61: bytes(5) + b"\xff" * 8,  # FL Studio 12.9
+    66: bytes(5) + b"\xff" * 8 + b"\x01" + bytes(4),  # FL Studio 20.8 to 24.1
+    70: bytes(5) + b"\xff" * 8 + b"\x01" + bytes(8),  # From FL Studio 24.2 (24.2.99+ seen)
+}
+
+
+def track_data(size: int, height: float = 1.0) -> bytes:
+    """Track data (event 238) of ``size`` bytes: track 1, default settings."""
+    known = struct.pack(
+        "<IIIBfiBIIIIIIBB", 1, 0x565148, 0, 1, height, -16, 0, 0, 0, 5, 0, 1, 0, 0, 0
+    )
+    return known + TRACK_DATA_TAILS[size]
+
+
+def track(data: bytes) -> Track:
+    return Track(EventTree(init=[IndexedEvent(0, TrackEvent(TrackID.Data, data))]), items=[])
+
+
+@pytest.mark.parametrize("size", [61, 66, 70])
+def test_track_data_sizes(size: int):
+    data = track_data(size)
+    model = track(data)
+
+    assert model.iid == 1
+    assert model.color == RGBA.from_bytes(bytes((72, 81, 86, 0)))
+    assert model.enabled
+    assert model.height == "100%"
+    assert model.trigger_sync == TrackSync.FourBeats
+    assert model.tolerant
+    assert not model.locked
+    assert bytes(model.events.first(TrackID.Data)) == bytes((238, size)) + data
+
+
+@pytest.mark.parametrize("size", [61, 66, 70])
+def test_track_height_is_kept_exact(size: int):
+    height = struct.unpack("<f", struct.pack("<f", 1.14))[0]  # 113.99999...%
+    data = track_data(size, height)
+    model = track(data)
+
+    assert model.height == "114%"
+    assert bytes(model.events.first(TrackID.Data)) == bytes((238, size)) + data
+
+    model.height = "50%"
+    assert model.height == "50%"
+    assert bytes(model.events.first(TrackID.Data))[15:19] == struct.pack("<f", 0.5)
