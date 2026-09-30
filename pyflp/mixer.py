@@ -595,9 +595,10 @@ class Mixer(EventModel, ModelCollection[Insert]):
     slot of a slot parameter. Insert and slot parameters are items of kind 31.
     The keys follow one of two layouts:
 
-    * Up to FL Studio 24.1: insert *n* (master = 0) is key ``128 + n`` and the
-      "current" insert, stored last, key 254. Send levels are kind 31 items
-      whose ``id`` is ``64 + destination``.
+    * Up to FL Studio 24.1: insert *n* (master = 0) is key ``128 + n``. The
+      "current" insert, stored last, is keyed by its position like the others:
+      254 with the 127 inserts of FL Studio 12.9 to 24.1. Send levels are kind
+      31 items whose ``id`` is ``64 + destination``.
     * When :attr:`MixerID.InsertCount` (event 103) is stored, from FL Studio
       24.2.99: insert *n* is key ``448 + n`` and the "current" insert key 949.
       Send levels are kind 32 items whose ``id`` is the destination.

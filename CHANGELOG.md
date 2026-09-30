@@ -25,15 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InsertRoute`, the destination and send level of an insert's route.
 - Events of FL Studio 24.2.99+ projects: `ChannelID.RoutedToInsert` (event 104),
   and ids whose meaning is unknown, kept as `ChannelID._50`, `_51`, `_170`,
-  `InsertID._42`, `_49`, `_165`, `_166` and `ProjectID._169`.
+  `InsertID._49` and `ProjectID._169`.
+- Insert events of older projects whose meaning is unknown: `InsertID._165` and
+  `_166` (FL Studio 20.99+) and `InsertID._42` (21.0+).
+- `EventBase.NEEDS_VERSION`: an event class which sets it gets the project's FL
+  Studio version from `pyflp.parse`, as the `version` keyword argument.
 
 ### Changed
 
 - `PatternPLItem.offsets` are int32 ticks, typed `tuple[int, int]`: floats fail.
   Setting `PLItemBase.offsets` checks the pair at once instead of failing when
-  the project is saved: a `PatternPLItem` takes `int` ticks and a `ChannelPLItem`
-  `float` (or `int`), else `TypeError`; values out of the int32 or float32 range
-  raise `ValueError`.
+  the project is saved: a `PatternPLItem` takes integer ticks and a
+  `ChannelPLItem` real numbers (numpy's count; a `bool` doesn't), else
+  `TypeError`; values out of the int32 or float32 range raise `ValueError`.
 - `PLItemBase.muted` has no setter any more: assigning it raises `AttributeError`.
   It returns `None` until the flag which mutes an item is confirmed.
 - `TrackEvent["height"]` holds the stored float (`1.0` for 100%) instead of a
