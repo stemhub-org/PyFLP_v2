@@ -200,6 +200,8 @@ def test_pattern_clip_offsets_are_checked(offsets, error: type[Exception], messa
         ((None, 1.0), TypeError, "channel clip offsets are float, not NoneType"),
         ((False, 1.0), TypeError, "channel clip offsets are float, not bool"),
         ((0.0, 1e39), ValueError, "outside the float32 range"),
+        ((10**40, 0.0), ValueError, "outside the float32 range"),
+        ((0.0, 10**400), ValueError, "outside the float32 range"),
         ((0.0,), ValueError, r"a \(start, end\) pair"),
     ],
 )
@@ -219,6 +221,48 @@ def test_channel_clip_offsets_take_ints_as_floats():
     assert item.offsets == (0.0, 1000.0)
     assert all(isinstance(offset, float) for offset in item.offsets)
     assert bytes(item._parent)[-80:][24:32] == struct.pack("<ff", 0.0, 1000.0)
+
+
+class _Index:
+    """A number which is an integer without being an ``int``, as numpy's are."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __index__(self) -> int:
+        return self.value
+
+
+class _Float:
+    """A number which is a float without being a ``float``, as numpy's ``float32``."""
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __float__(self) -> float:
+        return self.value
+
+
+def test_pattern_clip_offsets_take_integer_like_numbers():
+    item = clip(80, FL_25_2_4, pattern=1)
+    item.offsets = (_Index(96), _Index(192))  # type: ignore[assignment]
+    assert item.offsets == (96, 192)
+    assert all(type(offset) is int for offset in item.offsets)
+    assert bytes(item._parent)[-80:][24:32] == struct.pack("<ii", 96, 192)
+
+    with pytest.raises(TypeError, match="pattern clip offsets are int ticks, not _Float"):
+        item.offsets = (_Float(96.0), 192)  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="outside the int32 range"):
+        item.offsets = (_Index(2**31), 0)  # type: ignore[assignment]
+    assert item.offsets == (96, 192)
+
+
+def test_channel_clip_offsets_take_float_like_numbers():
+    item = clip(80, FL_25_2_4, channel=0)
+    item.offsets = (_Float(0.5), _Index(1000))  # type: ignore[assignment]
+    assert item.offsets == (0.5, 1000.0)
+    assert all(type(offset) is float for offset in item.offsets)
+    assert bytes(item._parent)[-80:][24:32] == struct.pack("<ff", 0.5, 1000.0)
 
 
 def test_item_flags_are_raw():

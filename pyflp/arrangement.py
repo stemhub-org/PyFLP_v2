@@ -16,9 +16,21 @@
 from __future__ import annotations
 
 import enum
+import operator
 import struct
 import warnings
-from typing import Any, Final, Generic, Iterator, Literal, Optional, TypeVar, cast
+from typing import (
+    Any,
+    Final,
+    Generic,
+    Iterator,
+    Literal,
+    Optional,
+    SupportsFloat,
+    SupportsIndex,
+    TypeVar,
+    cast,
+)
 
 import construct as c
 import construct_typed as ct
@@ -82,23 +94,33 @@ _OffsetT = TypeVar("_OffsetT", int, float)
 
 
 def _tick_offset(value: object) -> int:
-    """``value`` as a pattern clip's offset, an int32 of ticks."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    """``value`` as a pattern clip's offset, an int32 of ticks.
+
+    Any integer will do (an ``int`` or a type with ``__index__``, like numpy's),
+    but not a ``bool`` or a ``float``.
+    """
+    if isinstance(value, bool) or not isinstance(value, SupportsIndex):
         raise TypeError(f"pattern clip offsets are int ticks, not {type(value).__name__}")
-    if not _INT32_MIN <= value <= _INT32_MAX:
-        raise ValueError(f"pattern clip offset {value} is outside the int32 range")
-    return value
+    ticks = operator.index(value)
+    if not _INT32_MIN <= ticks <= _INT32_MAX:
+        raise ValueError(f"pattern clip offset {ticks} is outside the int32 range")
+    return ticks
 
 
 def _float_offset(value: object) -> float:
-    """``value`` as a channel clip's offset, a float32."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    """``value`` as a channel clip's offset, a float32.
+
+    Any real number will do (a ``float``, an ``int`` or a type with ``__float__``
+    or ``__index__``, like numpy's), but not a ``bool``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (SupportsFloat, SupportsIndex)):
         raise TypeError(f"channel clip offsets are float, not {type(value).__name__}")
     try:
-        struct.pack("<f", value)
+        number = float(value)  # An int too large for a float raises here
+        struct.pack("<f", number)
     except OverflowError:
         raise ValueError(f"channel clip offset {value} is outside the float32 range") from None
-    return float(value)
+    return number
 
 
 class PlaylistEvent(ListEventBase):
@@ -289,8 +311,8 @@ class PLItemBase(ItemModel[PlaylistEvent], ModelReprMixin, Generic[_OffsetT]):
         * :class:`ChannelPLItem`: ``float``, ``-1.0`` if not set.
 
         Raises:
-            TypeError: When set to anything but a pair of ``int`` (pattern clip)
-                or of ``float`` or ``int`` (channel clip).
+            TypeError: When set to anything but a pair of integers (pattern clip)
+                or of real numbers (channel clip); a ``bool`` is neither.
             ValueError: When set to more or fewer than two offsets, or to one
                 which doesn't fit in an int32 (pattern clip) or a float32.
         """
