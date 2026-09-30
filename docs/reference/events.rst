@@ -56,7 +56,11 @@ This is *roughly* the order of the events (as of latest FL Studio):
 
     a. Inserts:
 
-        A list of events in the order:
+        Master first, then inserts 1, 2 and so on, and the "current" insert
+        last. From FL Studio 24.2.99, :attr:`MixerID.InsertCount` (event 103)
+        precedes them and holds how many there are.
+
+        Each insert is a list of events in the order:
 
         I. Color, name, icon and flags
         II. Effect slots
@@ -102,6 +106,8 @@ events have any meaning in that context. Certain channels have extra events.
 23  :attr:`ChannelID.RingMod`           :attr:`Sampler.fx.ringmod`
 24  :attr:`ChannelID.FXFlags`           Quite a few, refer code.
 25  :attr:`ChannelID.RoutedTo`          :attr:`_SamplerInstrument.insert` [#1]_
+25* :attr:`ChannelID.RoutedToInsert`    :attr:`_SamplerInstrument.insert` [#1]_: event 104,
+                                        in place of 22 (``RoutedTo``) from FL Studio 24.2.99
 26  :attr:`ChannelID.Levels`            :attr:`Sampler.filter` + few more
 27  :attr:`ChannelID.LevelAdjusts`      :attr:`_SamplerInstrument.level_adjusts` [#1]_
 28  :attr:`ChannelID.Polyphony`         :attr:`_SamplerInstrument.polyphony` [#1]_

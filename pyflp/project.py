@@ -123,6 +123,7 @@ class ProjectID(EventEnum):
     CurGroupId = (DWORD + 18, I32Event)
     Tempo = (DWORD + 28, U32Event)
     FLBuild = (DWORD + 31, U32Event)
+    _169 = (DWORD + 41, U32Event)  # TODO Follows FLBuild, 7 so far (24.2.99+)
     Title = TEXT + 2
     Comments = TEXT + 3
     Url = TEXT + 5

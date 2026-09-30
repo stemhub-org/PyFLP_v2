@@ -12,6 +12,9 @@
 .. autoclass:: InsertEQBand
    :members:
 
+.. autoclass:: InsertRoute
+   :members:
+
 Enums
 -----
 

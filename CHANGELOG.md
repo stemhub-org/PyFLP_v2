@@ -19,18 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TimeMarker.action`: the action of a time marker (high byte of its position).
 - `tools/flp_parse_report.py` for generating an HTML parse coverage report for
   `.flp` files, including unknown top-level events and unknown VST sub-events.
+- `Insert.number`, the insert number FL Studio shows (master = 0, "current"
+  insert = -1), and `MixerID.InsertCount` (FL Studio 24.2.99+).
+- `EventTree.split()`, for event groups closed by a terminating event.
+- `InsertRoute`, the destination and send level of an insert's route.
+- Events of FL Studio 24.2.99+ projects: `ChannelID.RoutedToInsert` (event 104),
+  and ids whose meaning is unknown, kept as `ChannelID._50`, `_51`, `_170`,
+  `InsertID._49` and `ProjectID._169`.
+- Insert events of older projects whose meaning is unknown: `InsertID._165` and
+  `_166` (FL Studio 20.99+) and `InsertID._42` (21.0+).
+- `EventBase.NEEDS_VERSION`: an event class which sets it gets the project's FL
+  Studio version from `pyflp.parse`, as the `version` keyword argument.
 
 ### Changed
 
 - `PatternPLItem.offsets` are int32 ticks, typed `tuple[int, int]`: floats fail.
   Setting `PLItemBase.offsets` checks the pair at once instead of failing when
-  the project is saved: a `PatternPLItem` takes `int` ticks and a `ChannelPLItem`
-  `float` (or `int`), else `TypeError`; values out of the int32 or float32 range
-  raise `ValueError`.
+  the project is saved: a `PatternPLItem` takes integer ticks and a
+  `ChannelPLItem` real numbers (numpy's count; a `bool` doesn't), else
+  `TypeError`; values out of the int32 or float32 range raise `ValueError`.
 - `PLItemBase.muted` has no setter any more: assigning it raises `AttributeError`.
   It returns `None` until the flag which mutes an item is confirmed.
 - `TrackEvent["height"]` holds the stored float (`1.0` for 100%) instead of a
   string; `Track.height` still gets and sets a percentage string like `"100%"`.
+- `Mixer[i]` looks inserts up by `Insert.number`, as documented: `mixer[0]` is
+  master and `mixer[-1]` the "current" insert.
+- `Insert.routes` yields an `InsertRoute(destination, level)` for every insert
+  the routing (`InsertID.Routing`) sends to; it yielded values of the insert's
+  own params.
+- `MixerParamsEvent.items_` is keyed by the raw insert key (`channel_data >> 6`,
+  see `Mixer`) instead of that key `& 0x7F`, and the `_u1` field of its items is
+  now `kind`.
 
 ### Removed
 
@@ -58,6 +77,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a `UnicodeWarning`, and the text is saved back unchanged unless it is set.
 - Hardened `VSTPluginEvent` parsing to tolerate unknown wrapper markers and unknown
   sub-event IDs with warning diagnostics while preserving unknown payload bytes.
+- Each insert ends with its own `InsertID.Output`: `Insert.output` was the one of
+  the previous insert.
+- An effect slot holds the plugin events before its `SlotID.Index`: slot *n*
+  showed the plugin of slot *n + 1*.
+- Mixer params (`MixerID.Params`) reach the right insert in FL Studio 24.2.99+
+  projects, whose inserts use other keys, and send levels are no longer taken
+  for slot parameters. `Slot.enabled` and `Slot.mix` (dry/wet, 0 - 12800) no
+  longer raise `AttributeError`.
+- `Channel.insert` of FL Studio 24.2.99+ projects, which store it in
+  `ChannelID.RoutedToInsert` instead of `ChannelID.RoutedTo`.
 
 ## [2.2.1] - 2023-06-05
 

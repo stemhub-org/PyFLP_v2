@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from pyflp._events import WORD, AsciiEvent, EventEnum, EventTree, U8Event, UnicodeEvent
+from pyflp._events import (
+    WORD,
+    AsciiEvent,
+    EventEnum,
+    EventTree,
+    IndexedEvent,
+    U8Event,
+    UnicodeEvent,
+)
 from pyflp.exceptions import EventIDOutOfRange, InvalidEventChunkSize
 
 
@@ -28,6 +36,16 @@ def test_event_tree():
     assert root.first(EventEnum(0)) == event
     child.remove(EventEnum(0))
     assert not root
+
+
+def test_event_tree_split():
+    ids = (1, 2, 3, 2, 4, 1, 5)
+    root = EventTree(
+        init=(IndexedEvent(r, U8Event(EventEnum(id), b"\x00")) for r, id in enumerate(ids))
+    )
+    one, two, three = EventEnum(1), EventEnum(2), EventEnum(3)
+    groups = [[event.id for event in tree] for tree in root.split(two, one, three)]
+    assert groups == [[1, 2], [3, 2], [1]]
 
 
 # "Hi 🙈 there" with the second half of the emoji lost, as FL Studio saved it
