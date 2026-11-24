@@ -43,26 +43,36 @@ WORD: Final = 64
 DWORD: Final = 128
 TEXT: Final = 192
 DATA: Final = 208
+FL_STUDIO_TEXT: Final = 0xC0000101
+"""Extended text event "FL Studio <version>.<build>", second in FL Studio 25.2.3+ projects."""
 NEW_TEXT_IDS: Final = (
+    FL_STUDIO_TEXT,  # ProjectID.FLStudio
     TEXT + 49,  # ArrangementID.Name
     TEXT + 39,  # DisplayGroupID.Name
     TEXT + 47,  # TrackID.Name
 )
-ODD_SIZE_IDS: Final = {
-    DWORD + 44: 3,  # From FL 25.2.3; 01 01 00 so far, then TEXT holds "FL Studio <version>"
-}
-"""Fixed size events whose data size isn't the one of their ID's range."""
+EXTENDED_ID: Final = DWORD + 44
+"""Byte 0xAC (172) is no event: an ID above 255 follows it as a little-endian u32.
+
+FL Studio's event writer and reader (FLEngine, checked in FL Studio 2026) handle every
+ID this way, and FL Studio 25.2.3 and later write such IDs. :func:`fixed_size` gives
+their data size.
+"""
+MAX_ID: Final = 0xFFFFFFFF
+EXTENDED_SIZES: Final = {0x0: 1, 0x4: 2, 0x8: 4, 0xC: None}
+"""An extended ID's data size, by its top 4 bits; FL Studio reads no data for the others."""
 
 
 def fixed_size(id: int) -> int | None:
     """Data size of the fixed size event ``id``, or ``None`` if it is length-prefixed.
 
     Events below ``WORD`` hold 1 byte, below ``DWORD`` 2 bytes, below ``TEXT`` 4
-    bytes, except those in :attr:`ODD_SIZE_IDS`. From ``TEXT`` on, a varint
-    holding the size of the data precedes it.
+    bytes; from ``TEXT`` on, a varint holding the size of the data precedes it. An
+    extended ID (above 255, see :attr:`EXTENDED_ID`) follows the same rule by its
+    top 4 bits (:attr:`EXTENDED_SIZES`), with no data for the other values.
     """
-    if id in ODD_SIZE_IDS:
-        return ODD_SIZE_IDS[id]
+    if id > 0xFF:
+        return EXTENDED_SIZES.get(id >> 28, 0)
     if id < WORD:
         return 1
     if id < DWORD:
@@ -70,6 +80,13 @@ def fixed_size(id: int) -> int | None:
     if id < TEXT:
         return 4
     return None
+
+
+def id_bytes(id: int) -> bytes:
+    """An ID as FL Studio writes it: one byte up to 255, else :attr:`EXTENDED_ID` and a u32."""
+    if id > 0xFF:
+        return c.Byte.build(EXTENDED_ID) + c.Int32ul.build(id)
+    return c.Byte.build(id)
 
 
 class _EventEnumMeta(enum.EnumMeta):
@@ -118,8 +135,8 @@ class EventEnum(int, enum.Enum, metaclass=_EventEnumMeta):
     # events, if the name of the ID is directly visible.
     @classmethod
     def _missing_(cls, value: object) -> EventEnum | None:
-        """Allows unknown IDs in the range of 0-255."""
-        if isinstance(value, int) and 0 <= value <= 255:
+        """Allows unknown IDs: 0-255 and extended ones, up to :attr:`MAX_ID`."""
+        if isinstance(value, int) and 0 <= value <= MAX_ID:
             # First check in existing subclasses
             for sc in cls.__subclasses__():
                 if value in sc:
@@ -129,7 +146,7 @@ class EventEnum(int, enum.Enum, metaclass=_EventEnumMeta):
             pseudo_member = cls._value2member_map_.get(value, None)
             if pseudo_member is None:
                 new_member = int.__new__(cls, value)
-                new_member._name_ = str(value)
+                new_member._name_ = str(value) if value <= 0xFF else f"0x{value:08X}"
                 new_member._value_ = value
                 pseudo_member = cls._value2member_map_.setdefault(value, new_member)
             return cast(EventEnum, pseudo_member)
@@ -149,6 +166,8 @@ class EventBase(Generic[T]):
     """
 
     def __init__(self, id: EventEnum, data: bytes, **kwds: Any) -> None:
+        if id == EXTENDED_ID:
+            raise EventIDOutOfRange(id)  # FL Studio would read it as the start of an extended ID
         if self.ALLOWED_IDS and id not in self.ALLOWED_IDS:
             raise EventIDOutOfRange(id, *self.ALLOWED_IDS)
 
@@ -171,10 +190,10 @@ class EventBase(Generic[T]):
         return self.id != o.id or self.value != cast(EventBase[T], o).value
 
     def __bytes__(self) -> bytes:
-        id = c.Byte.build(self.id)
+        id = id_bytes(self.id)
         data = self.STRUCT.build(self.value, **self._kwds)
 
-        if self.id < TEXT:
+        if fixed_size(self.id) is not None:
             return id + data
 
         length = c.VarInt.build(len(data))
@@ -190,7 +209,7 @@ class EventBase(Generic[T]):
         data_size = fixed_size(self.id)
         if data_size is None:
             return len(bytes(self))
-        return 1 + data_size
+        return len(id_bytes(self.id)) + data_size
 
 
 AnyEvent: TypeAlias = EventBase[Any]
@@ -378,7 +397,7 @@ class UnicodeEvent(StrEventBase):
     def __bytes__(self) -> bytes:
         if self._invalid is not None and self.value == self._invalid[1]:
             data = self._invalid[0]
-            return c.Byte.build(self.id) + c.VarInt.build(len(data)) + data
+            return id_bytes(self.id) + c.VarInt.build(len(data)) + data
         return super().__bytes__()
 
 

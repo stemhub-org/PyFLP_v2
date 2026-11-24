@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Extended event IDs: byte 0xAC (`EXTENDED_ID`) is read as FL Studio reads it, the
+  escape of an ID above 255 that follows it as a little-endian u32, whose top 4 bits
+  give its data size (`EXTENDED_SIZES`: 1, 2 or 4 bytes or length-prefixed). Checked
+  in FL Studio 2026's own event reader and writer, and on projects from FL Studio 10.9
+  to 26.1.7. `id_bytes()` writes an ID back the same way.
+- `ProjectID.FLStudio` (extended ID `FL_STUDIO_TEXT`, 0xC0000101): the text
+  "FL Studio <version>.<build>" of FL Studio 25.2.3+ projects, read as a
+  `UnicodeEvent`, and `ProjectID._256` (extended ID 0x100, 1 byte, FL Studio 26.1+).
+
 - `PLItemBase.item_flags`: the raw flags of a playlist item.
 - `PlaylistEvent.item_size()`: the size of a playlist item in a project saved by
   a given FL Studio version, and the `version=` keyword argument of
@@ -57,8 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Event 172 holds 3 bytes (FL Studio 25.2.3 and later) although its ID lies in the
-  4 byte range; reading 4 bytes shifted every later event and lost the tempo.
+- Byte 0xAC (172) is the extended ID escape, not an event (FL Studio 25.2.3 and later
+  write it): reading it as a 4 byte event shifted every later event and lost the tempo.
+  It was first read as a 3 byte event followed by a one byte ID (text event 192 in
+  FL Studio 25.2.3+ projects). That lands on the same bytes for every extended ID whose
+  top 4 bits are 0, 4, 8 or C, whose top byte is a one byte ID of the same size, but
+  not for the others, which hold no data; `ODD_SIZE_IDS` is removed.
 - Playlist items take 32, 60 or 80 bytes depending on the FL Studio version that
   saved the project (80 from FL Studio 24.2; only files from 24.2.99 and later have
   been seen). `pyflp.parse` passes the version to `PlaylistEvent`, since the event's
