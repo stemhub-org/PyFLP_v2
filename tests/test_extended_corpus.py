@@ -6,16 +6,17 @@ user projects) must stay out of the repository; point this at them instead.
 Projects from FL Studio 12.9 to 25.2.4 passed both tests on the corpus this was
 written with. On a larger one (FL Studio 10.9 to 26.1.7), some 20.0 to 26.1
 projects fail :func:`test_project`, their playlist (event 233) not saving back
-unchanged, and projects before 12.9 fail both. They rely on these parsing fixes, without which FL Studio 2024
-and later projects fail or come out wrong: byte 0xAC read as the escape of an
-extended event ID (FL Studio 25.2.3+ projects, where a 4 byte event 172 shifts
-every later event), playlist items sized by the FL Studio version (80 bytes
-from 24.2) and text which isn't valid UTF-16 decoded with a warning (seen in
-FL Studio 25.1 comments). :func:`test_project` also relies on pattern clip
-offsets and track data saving back unchanged. :func:`test_mixer` relies on the
-mixer fixes: inserts ending with their output, slots closed by their index,
-mixer params mapped by key layout, routes read from the routing flags and
-channel inserts read from ``ChannelID.RoutedToInsert`` (event 104).
+unchanged, and projects before 12.9 fail both. They rely on these parsing
+fixes, without which FL Studio 2024 and later projects fail or come out wrong:
+byte 0xAC read as the escape of an extended event ID (FL Studio 25.2.3+
+projects, where a 4 byte event 172 shifts every later event), playlist items
+sized by the FL Studio version (80 bytes from 24.2) and text which isn't valid
+UTF-16 decoded with a warning (seen in FL Studio 25.1 comments).
+:func:`test_project` also relies on pattern clip offsets and track data saving
+back unchanged. :func:`test_mixer` relies on the mixer fixes: inserts ending
+with their output, slots closed by their index, mixer params mapped by key
+layout, routes read from the routing flags and channel inserts read from
+``ChannelID.RoutedToInsert`` (event 104).
 """
 
 from __future__ import annotations
