@@ -6,6 +6,7 @@ import struct
 import pytest
 
 import pyflp
+from pyflp._events import FL_STUDIO_TEXT
 from pyflp.arrangement import ArrangementID, ChannelPLItem, PatternPLItem, PlaylistEvent
 from pyflp.types import FLVersion
 
@@ -104,7 +105,7 @@ def test_parse_passes_version_to_playlist(tmp_path: pathlib.Path):
     path = write(
         tmp_path,
         ascii_text(199, "25.2.4.4960"),
-        event(172, b"\x01\x01\x00"),
+        utf16_text(FL_STUDIO_TEXT, "FL Studio 25.2.4.4960.4960"),
         u32(156, 128000),
         utf16_text(231, "Unsorted"),  # DisplayGroupID.Name
         u16(64, 0),  # ChannelID.New

@@ -29,6 +29,7 @@ from pyflp._descriptors import EventProp, KWProp
 from pyflp._events import (
     DATA,
     DWORD,
+    FL_STUDIO_TEXT,
     TEXT,
     WORD,
     AnyEvent,
@@ -124,11 +125,13 @@ class ProjectID(EventEnum):
     Tempo = (DWORD + 28, U32Event)
     FLBuild = (DWORD + 31, U32Event)
     _169 = (DWORD + 41, U32Event)  # TODO Follows FLBuild, 7 so far (24.2.99+)
+    _256 = 0x100  # TODO Extended, 1 byte, 0 so far, after the comments (26.1+)
     Title = TEXT + 2
     Comments = TEXT + 3
     Url = TEXT + 5
     _RTFComments = TEXT + 6  #: 1.2.10+
     FLVersion = (TEXT + 7, AsciiEvent)
+    FLStudio = FL_STUDIO_TEXT  #: 25.2.3+ "FL Studio <version>.<build>"
     Licensee = TEXT + 8  #: 1.3.9+
     DataPath = TEXT + 10  #: 9.0+
     Genre = TEXT + 14  #: 5.0+
