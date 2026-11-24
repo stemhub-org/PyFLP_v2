@@ -3,16 +3,20 @@
 Skipped otherwise. Projects which aren't ours to share (FL Studio demo songs,
 user projects) must stay out of the repository; point this at them instead.
 
-Projects from FL Studio 12.9 to 25.2.4 pass both tests. They rely on these
-parsing fixes, without which FL Studio 2024 and 2025 projects fail or come out
-wrong: event 172 read as 3 bytes (FL Studio 25.2.3+ projects, where 4 bytes
-shift every later event), playlist items sized by the FL Studio version (80
-bytes from 24.2) and text which isn't valid UTF-16 decoded with a warning (seen
-in FL Studio 25.1 comments). :func:`test_project` also relies on pattern clip
-offsets and track data saving back unchanged. :func:`test_mixer` relies on the
-mixer fixes: inserts ending with their output, slots closed by their index,
-mixer params mapped by key layout, routes read from the routing flags and
-channel inserts read from ``ChannelID.RoutedToInsert`` (event 104).
+Projects from FL Studio 12.9 to 25.2.4 passed both tests on the corpus this was
+written with. On a larger one (FL Studio 10.9 to 26.1.7), some 20.0 to 26.1
+projects fail :func:`test_project`, their playlist (event 233) not saving back
+unchanged, and projects before 12.9 fail both. They rely on these parsing
+fixes, without which FL Studio 2024 and later projects fail or come out wrong:
+byte 0xAC read as the escape of an extended event ID (FL Studio 25.2.3+
+projects, where a 4 byte event 172 shifts every later event), playlist items
+sized by the FL Studio version (80 bytes from 24.2) and text which isn't valid
+UTF-16 decoded with a warning (seen in FL Studio 25.1 comments).
+:func:`test_project` also relies on pattern clip offsets and track data saving
+back unchanged. :func:`test_mixer` relies on the mixer fixes: inserts ending
+with their output, slots closed by their index, mixer params mapped by key
+layout, routes read from the routing flags and channel inserts read from
+``ChannelID.RoutedToInsert`` (event 104).
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import construct as c
 import pytest
 
 import pyflp
-from pyflp._events import ODD_SIZE_IDS, StrEventBase, fixed_size
+from pyflp._events import EXTENDED_ID, StrEventBase, fixed_size
 from pyflp.arrangement import PATTERN_BASE, ArrangementID, PlaylistEvent, TrackID
 from pyflp.channel import Instrument, Sampler
 from pyflp.mixer import SlotID
@@ -35,7 +39,7 @@ from pyflp.timemarker import TimeMarkerID
 
 CORPUS = os.environ.get("PYFLP_EXTENDED_CORPUS")
 PATHS = sorted(pathlib.Path(CORPUS).rglob("*.flp")) if CORPUS else []
-ARRANGEMENT_IDS = {*ArrangementID, *TrackID, *TimeMarkerID, *ODD_SIZE_IDS}
+ARRANGEMENT_IDS = {*ArrangementID, *TrackID, *TimeMarkerID}
 
 pytestmark = pytest.mark.skipif(not CORPUS, reason="PYFLP_EXTENDED_CORPUS is not set")
 
@@ -51,11 +55,14 @@ def raw_events(data: bytes) -> Iterator[tuple[int, bytes, int]]:
     pos = 22
     while pos < len(data):
         start, id = pos, data[pos]
+        pos += 1
+        if id == EXTENDED_ID:
+            id, pos = int.from_bytes(data[pos : pos + 4], "little"), pos + 4
         size = fixed_size(id)
         if size is None:
-            size = c.VarInt.parse(data[pos + 1 : pos + 11])
+            size = c.VarInt.parse(data[pos : pos + 10])
             pos += len(c.VarInt.build(size))
-        pos += 1 + size
+        pos += size
         yield id, data[start:pos], size
 
 
@@ -72,7 +79,7 @@ def test_project(path: pathlib.Path):
 
     items = 0
     for (id, chunk, size), event in zip(raw, events):
-        if id in ARRANGEMENT_IDS or isinstance(event, StrEventBase):
+        if id in ARRANGEMENT_IDS or id > 0xFF or isinstance(event, StrEventBase):
             assert bytes(event) == chunk, f"event {id} doesn't save back unchanged"
 
         if isinstance(event, PlaylistEvent):

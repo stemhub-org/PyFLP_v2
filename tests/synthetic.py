@@ -17,16 +17,23 @@ import construct as c
 
 import pyflp
 from pyflp import Project
-from pyflp._events import TEXT
+from pyflp._events import EXTENDED_ID, fixed_size
 
 RawEvent = Tuple[int, bytes]
 
 
+def event_id(id: int) -> bytes:
+    """An ID as FL Studio writes it: one byte up to 255, else 0xAC then the ID as a u32."""
+    if id > 0xFF:
+        return bytes([EXTENDED_ID]) + struct.pack("<I", id)
+    return bytes([id])
+
+
 def event(id: int, data: bytes) -> bytes:
-    """Serialises an event: fixed size data as is, from ``TEXT`` on length-prefixed."""
-    if id >= TEXT:
-        return bytes([id]) + c.VarInt.build(len(data)) + data
-    return bytes([id]) + data
+    """Serialises an event: fixed size data as is, else length-prefixed (see ``fixed_size``)."""
+    if fixed_size(id) is None:
+        return event_id(id) + c.VarInt.build(len(data)) + data
+    return event_id(id) + data
 
 
 def u8(id: int, value: int) -> bytes:

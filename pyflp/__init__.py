@@ -40,8 +40,8 @@ import construct as c
 from pyflp._events import (
     DATA,
     DWORD,
+    EXTENDED_ID,
     NEW_TEXT_IDS,
-    ODD_SIZE_IDS,
     TEXT,
     WORD,
     AnyEvent,
@@ -56,7 +56,12 @@ from pyflp._events import (
     UnknownDataEvent,
     fixed_size,
 )
-from pyflp.exceptions import HeaderCorrupted, VersionNotDetected
+from pyflp.exceptions import (
+    EventIDOutOfRange,
+    HeaderCorrupted,
+    InvalidEventChunkSize,
+    VersionNotDetected,
+)
 from pyflp.plugin import PluginID, get_event_by_internal_name
 from pyflp.project import VALID_PPQS, FileFormat, Project, ProjectID
 from pyflp.types import FLVersion
@@ -124,7 +129,7 @@ def parse(file: pathlib.Path | str) -> Project:
     stream.seek(22)  # Back to start of events
     while stream.tell() < file_size:
         event_type: type[AnyEvent] | None = None
-        id = EventEnum(int.from_bytes(stream.read(1), "little"))
+        id = EventEnum(_read_id(stream))
 
         size = fixed_size(id)
         if size is None:
@@ -145,7 +150,7 @@ def parse(file: pathlib.Path | str) -> Project:
                 break
 
         if event_type is None:
-            if id in ODD_SIZE_IDS:
+            if id > 0xFF and id.value not in NEW_TEXT_IDS:
                 event_type = UnknownDataEvent
             elif id < WORD:
                 event_type = U8Event
@@ -177,6 +182,20 @@ def parse(file: pathlib.Path | str) -> Project:
         format=file_format,
         ppq=ppq,
     )
+
+
+def _read_id(stream: io.BytesIO) -> int:
+    """Reads an event ID: one byte, or after :attr:`EXTENDED_ID` a u32 above 255."""
+    id = int.from_bytes(stream.read(1), "little")
+    if id != EXTENDED_ID:
+        return id
+    raw = stream.read(4)
+    if len(raw) != 4:
+        raise InvalidEventChunkSize(4, len(raw))
+    id = int.from_bytes(raw, "little")
+    if id <= 0xFF:  # FL Studio writes those as one byte: it couldn't be saved back as read
+        raise EventIDOutOfRange(id, 0x100, 0xFFFFFFFF)
+    return id
 
 
 def save(project: Project, file: pathlib.Path | str) -> None:
